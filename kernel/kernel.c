@@ -7,6 +7,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "gdt.h"
+
 /* VGA Text Mode constants */
 static const size_t VGA_WIDTH = 80;
 static const size_t VGA_HEIGHT = 25;
@@ -16,6 +18,9 @@ static const size_t VGA_HEIGHT = 25;
  * The bootloader has placed us in 32-bit Protected Mode.
  */
 void kernel_main(void) {
+    /* Initialize the Global Descriptor Table */
+    init_gdt();
+
     /* 
      * The VGA text buffer is mapped directly to physical memory address 0xB8000.
      * We can create a pointer to this address and write to it to display text.
