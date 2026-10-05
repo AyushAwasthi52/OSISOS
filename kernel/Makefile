@@ -9,7 +9,7 @@ AS = gcc
 # -ffreestanding: Assumes no standard library exists (no malloc, printf, etc.)
 # -O2: Optimization level
 # -Wall -Wextra: Enable warnings
-CFLAGS = -m32 -ffreestanding -O2 -Wall -Wextra -fno-pie
+CFLAGS = -m32 -ffreestanding -O2 -Wall -Wextra -fno-pie -mno-sse -mno-sse2 -mno-mmx -mno-80387
 
 # Linker flags
 # -nostdlib: Do not link the standard C library
