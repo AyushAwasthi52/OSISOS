@@ -21,3 +21,17 @@ isr0:
     /* We halt because a divide by zero in the kernel is fatal right now. */
 1:  hlt 
     jmp 1b
+
+/*
+ * Interrupt Service Routine for Hardware Interrupt 33 (Keyboard)
+ */
+.global isr33
+isr33:
+    cli             /* Disable other interrupts while we process the keyboard */
+    pusha           /* Save all general-purpose registers (eax, ebx, ecx, etc.) */
+    
+    call keyboard_handler
+    
+    popa            /* Restore all general-purpose registers */
+    sti             /* Re-enable interrupts */
+    iret            /* Return from the interrupt and resume whatever the CPU was doing */
