@@ -22,6 +22,19 @@ int main(int argc, char** argv) {
             break;
         } else if (strcmp(cmd, "sysinfo") == 0) {
             printf("OSISOS - Resource-constrained Linux-based operating environment\n");
+        } else if (strncmp(cmd, "run ", 4) == 0) {
+            // Extract the program name after "run "
+            char* program = cmd + 4;
+            // For now, we just pass the program name without additional arguments
+            char* args[] = {program, NULL}; 
+            
+            // Use our OSISOS process API to create and wait for the process
+            osisos_pid_t child = osisos_process_create(program, args);
+            if (child > 0) {
+                int status;
+                osisos_process_wait(child, &status);
+                printf("[Process %d finished]\n", child);
+            }
         } else if (strlen(cmd) > 0) {
             printf("Unknown command: %s\n", cmd);
         }
