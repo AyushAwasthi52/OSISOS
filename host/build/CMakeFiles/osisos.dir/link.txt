@@ -1,0 +1,1 @@
+/usr/bin/cc -Wl,--dependency-file=CMakeFiles/osisos.dir/link.d CMakeFiles/osisos.dir/shell/main.c.o CMakeFiles/osisos.dir/core/process/process.c.o -o osisos
