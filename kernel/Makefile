@@ -17,7 +17,7 @@ CFLAGS = -m32 -ffreestanding -O2 -Wall -Wextra -fno-pie -mno-sse -mno-sse2 -mno-
 LDFLAGS = -m32 -T linker.ld -nostdlib -lgcc -no-pie
 
 # Files to build
-OBJS = boot.o gdt_flush.o gdt.o kernel.o
+OBJS = boot.o gdt_flush.o gdt.o idt_flush.o idt.o kernel.o
 
 all: osisos.bin
 
@@ -32,6 +32,14 @@ gdt_flush.o: gdt_flush.S
 # Compile gdt.c
 gdt.o: gdt.c
 	$(CC) $(CFLAGS) -c gdt.c -o gdt.o
+
+# Assemble idt_flush.S
+idt_flush.o: idt_flush.S
+	$(AS) -m32 -c idt_flush.S -o idt_flush.o
+
+# Compile idt.c
+idt.o: idt.c
+	$(CC) $(CFLAGS) -c idt.c -o idt.o
 
 # Compile kernel.c
 kernel.o: kernel.c
