@@ -6,14 +6,18 @@
 #include "idt.h"
 #include "pic.h"
 #include "io.h"
+#include "keyboard.h"
 
 /* VGA Text Mode constants */
 static const size_t VGA_WIDTH = 80;
 static const size_t VGA_HEIGHT = 25;
 uint16_t* terminal_buffer = (uint16_t*) 0xB8000;
-size_t terminal_row = 3; // Keep track of which row we are printing on
 
-/* Helper function to print a string to the screen */
+/* Keep track of the cursor position globally */
+size_t terminal_row = 3; 
+size_t terminal_col = 0;
+
+/* Helper function to print a full string at a specific row */
 void kernel_print(const char* message, size_t color, size_t row) {
     for (size_t i = 0; message[i] != '\0'; i++) {
         size_t index = row * VGA_WIDTH + i;
@@ -21,45 +25,62 @@ void kernel_print(const char* message, size_t color, size_t row) {
     }
 }
 
-/* This function is called from assembly (isr0) when a divide by zero occurs */
+/* 
+ * Prints a single character to the screen and advances the cursor.
+ * Handles newlines and basic backspacing!
+ */
+void terminal_putchar(char c) {
+    if (c == '\n') {
+        terminal_col = 0;
+        terminal_row++;
+    } else if (c == '\b') {
+        if (terminal_col > 0) {
+            terminal_col--;
+            // Erase the character by printing a space over it
+            size_t index = terminal_row * VGA_WIDTH + terminal_col;
+            terminal_buffer[index] = (uint16_t) ' ' | (uint16_t) 0x0F << 8;
+        }
+    } else {
+        size_t index = terminal_row * VGA_WIDTH + terminal_col;
+        terminal_buffer[index] = (uint16_t) c | (uint16_t) 0x0F << 8;
+        terminal_col++;
+        // Wrap to the next line if we hit the edge
+        if (terminal_col >= VGA_WIDTH) {
+            terminal_col = 0;
+            terminal_row++;
+        }
+    }
+
+    // Basic wrap around if we hit the bottom of the screen (for now)
+    if (terminal_row >= VGA_HEIGHT) {
+        terminal_row = 3; 
+    }
+}
+
 void isr0_handler(void) {
     kernel_print("EXCEPTION: Divide by Zero Caught! Halting System.", 0x0C, 2);
 }
 
-/* 
- * This function is called from assembly (isr33) when a key is pressed or released.
- */
 void keyboard_handler(void) {
-    /* The keyboard sends its data to I/O port 0x60 */
     uint8_t scancode = inb(0x60);
 
-    /* Very basic check to ensure we only print when a key is PRESSED (not released) */
-    if (!(scancode & 0x80)) {
-        kernel_print("A Key was Pressed!", 0x0A, terminal_row); // 0x0A is Light Green
-        
-        // Move to the next row, and wrap around if we hit the bottom
-        terminal_row++;
-        if (terminal_row >= VGA_HEIGHT) {
-            terminal_row = 3;
-        }
+    /* Convert the raw scancode to an ASCII character */
+    char ascii = keyboard_scancode_to_ascii(scancode);
+    
+    /* If it is a printable character (not 0), print it to the screen! */
+    if (ascii != 0) {
+        terminal_putchar(ascii);
     }
 
-    /* We MUST tell the PIC that we finished handling the interrupt, or it will stop sending them. */
-    /* Command 0x20 is End of Interrupt (EOI). We send it to the Master PIC's command port (0x20). */
+    /* End of Interrupt */
     outb(0x20, 0x20);
 }
 
 void kernel_main(void) {
-    /* 1. Initialize Memory Layout (GDT) */
     init_gdt();
-    
-    /* 2. Initialize Interrupt Table (IDT) */
     init_idt();
-    
-    /* 3. Remap the PIC so hardware interrupts don't collide with exceptions */
     pic_remap();
 
-    /* Clear the screen */
     for (size_t y = 0; y < VGA_HEIGHT; y++) {
         for (size_t x = 0; x < VGA_WIDTH; x++) {
             const size_t index = y * VGA_WIDTH + x;
@@ -68,19 +89,11 @@ void kernel_main(void) {
     }
 
     kernel_print("OSISOS Kernel Booted Successfully!", 0x0F, 0);
-    kernel_print("PIC Remapped. Waiting for keyboard input...", 0x0B, 1); // 0x0B is Cyan
+    kernel_print("Keyboard driver loaded. Type freely below!", 0x0B, 1);
 
-    /* 
-     * 4. Enable Hardware Interrupts! 
-     * `sti` (Set Interrupt Flag) tells the CPU to start listening to the PIC.
-     */
     __asm__ volatile ("sti");
 
-    /* 
-     * 5. Infinite loop. The CPU will just spin here, and jump to `keyboard_handler`
-     * instantly whenever a key is pressed, then return here.
-     */
     while (1) {
-        __asm__ volatile ("hlt"); // hlt puts CPU to sleep until next interrupt saves power
+        __asm__ volatile ("hlt");
     }
 }
