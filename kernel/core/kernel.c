@@ -111,10 +111,6 @@ void keyboard_handler(void) {
 
 /* This function will run entirely in Ring 3 (User Space)! */
 void user_program(void) {
-    /* Write a direct Blue 'U' to prove we entered User Mode! */
-    volatile uint16_t* vga = (volatile uint16_t*) 0xB8000;
-    vga[15 * 80 + 0] = 'U' | 0x0900; 
-
     char anim[] = {'|', '/', '-', '\\'};
     int i = 0;
     
@@ -124,15 +120,12 @@ void user_program(void) {
     while(1) {
         buf[0] = anim[i];
         
-        /* Write a Magenta 'S' right before calling the syscall to prove we are looping */
-        vga[15 * 80 + 2] = 'S' | 0x0D00;
-        
+        /* SYSCALL 1: Print String (Pointer, Color, Row) */
         syscall(1, (uint32_t)buf, 0x0E, 24);
         
-        /* Write a Cyan 'R' right after returning from syscall */
-        vga[15 * 80 + 4] = 'R' | 0x0B00;
-
         i = (i + 1) % 4;
+        
+        /* Slow it down */
         for(volatile int d = 0; d < 5000000; d++); 
     }
 }

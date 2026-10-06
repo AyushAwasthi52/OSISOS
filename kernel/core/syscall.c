@@ -9,10 +9,6 @@ extern void kernel_print(const char* message, size_t color, size_t row);
  * and lands here. The arguments are passed in registers.
  */
 uint32_t syscall_handler(uint32_t eax, uint32_t ebx, uint32_t ecx, uint32_t edx) {
-    /* Print a Green 'K' to prove we entered the Kernel Syscall Handler! */
-    uint16_t* vga = (uint16_t*) 0xB8000;
-    vga[15 * 80 + 6] = 'K' | 0x0A00;
-
     switch(eax) {
         case 1: 
             /* 
