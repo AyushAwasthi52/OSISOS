@@ -11,6 +11,7 @@
 #include "multiboot.h"
 #include "pmm.h"
 #include "paging.h"
+#include "kheap.h"
 
 /* VGA Text Mode constants */
 static const size_t VGA_WIDTH = 80;
@@ -146,7 +147,32 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
 
     /* Initialize Virtual Memory (Paging) */
     init_paging();
-    terminal_print_string("Paging Enabled! Virtual Memory is now active.\n");
+    terminal_print_string("Paging Enabled! Virtual Memory is now active.\n\n");
+
+    /* Initialize the Kernel Heap Allocator */
+    init_kheap();
+    terminal_print_string("Kernel Heap (kmalloc) Initialized.\n");
+    
+    /* Test Allocating arbitrary sizes! */
+    void* str1 = kmalloc(16);
+    terminal_print_string("kmalloc(16) assigned address: ");
+    terminal_print_hex((uint32_t)str1);
+    terminal_putchar('\n');
+    
+    void* str2 = kmalloc(32);
+    terminal_print_string("kmalloc(32) assigned address: ");
+    terminal_print_hex((uint32_t)str2);
+    terminal_putchar('\n');
+    
+    /* Free str1 */
+    kfree(str1);
+    terminal_print_string("kfree() called on first address.\n");
+    
+    /* Allocate 8 bytes, it should reuse the str1 space! */
+    void* str3 = kmalloc(8);
+    terminal_print_string("kmalloc(8)  assigned address: ");
+    terminal_print_hex((uint32_t)str3);
+    terminal_putchar('\n');
 
     terminal_print_string("\nType anywhere below:\n");
 
