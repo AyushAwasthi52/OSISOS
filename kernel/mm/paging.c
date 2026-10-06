@@ -37,12 +37,12 @@ void init_paging(void) {
             /* Calculate the exact physical address this entry should point to */
             uint32_t physical_address = (i * 4194304) + (j * 4096);
             
-            /* Attribute 3 = 0x011 in binary (Present = 1, Read/Write = 1) */
-            page_table[j] = physical_address | 3; 
+            /* Attribute 7 = 0x111 in binary (Present = 1, Read/Write = 1, User Mode = 1) */
+            page_table[j] = physical_address | 7; 
         }
         
         /* Put the Page Table into the Page Directory */
-        kernel_page_directory[i] = ((uint32_t)page_table) | 3;
+        kernel_page_directory[i] = ((uint32_t)page_table) | 7;
     }
     
     /* 3. Load the Page Directory into the CPU (CR3 register) */

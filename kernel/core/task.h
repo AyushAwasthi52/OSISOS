@@ -24,4 +24,7 @@ void create_task(void (*entry_point)(void));
 /* Voluntarily yield the CPU to the next Task in the queue */
 void task_yield(void);
 
+/* Jump down to Ring 3 (User Mode) */
+void jump_usermode(uint32_t user_eip, uint32_t user_esp);
+
 #endif

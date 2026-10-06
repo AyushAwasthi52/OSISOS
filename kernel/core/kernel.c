@@ -107,7 +107,8 @@ void keyboard_handler(void) {
     outb(0x20, 0x20);
 }
 
-void task2_main(void) {
+/* This function will run entirely in Ring 3 (User Space)! */
+void user_program(void) {
     char anim[] = {'|', '/', '-', '\\'};
     int i = 0;
     while(1) {
@@ -118,9 +119,20 @@ void task2_main(void) {
         
         /* Slow it down */
         for(volatile int d = 0; d < 5000000; d++); 
-        
-        /* NOTE: We removed task_yield() entirely! Task 2 refuses to give up the CPU. */
     }
+}
+
+/* This is a Ring 0 Kernel thread that prepares the User Space environment */
+void task2_main(void) {
+    /* Allocate 4KB for the User Mode stack using our heap */
+    uint32_t user_stack_base = (uint32_t) kmalloc(4096);
+    uint32_t user_stack_top  = user_stack_base + 4096;
+    
+    /* 
+     * Perform the mystical privilege downgrade!
+     * This function will never return. We will permanently drop into Ring 3!
+     */
+    jump_usermode((uint32_t)user_program, user_stack_top);
 }
 
 /* kernel_main now takes the parameters we pushed in boot.S */
