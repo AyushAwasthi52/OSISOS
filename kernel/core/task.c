@@ -49,3 +49,71 @@ void init_tasking(void) {
     /* Safe to turn interrupts back on! */
     __asm__ volatile("sti");
 }
+
+/* External reference to our new assembly context switcher */
+extern void perform_task_switch(uint32_t new_esp, uint32_t new_cr3, uint32_t* old_esp_ptr);
+
+void create_task(void (*entry_point)(void)) {
+    __asm__ volatile("cli");
+    
+    /* Allocate the PCB */
+    task_t* new_task = (task_t*) kmalloc(sizeof(task_t));
+    new_task->pid = next_pid++;
+    new_task->page_directory = kernel_page_directory;
+    new_task->next = NULL;
+
+    /* Allocate a 4KB stack exclusively for this task */
+    uint32_t stack_base = (uint32_t) kmalloc(4096);
+    uint32_t* stack = (uint32_t*)(stack_base + 4096); /* Top of the stack */
+
+    /* 
+     * We must "fake" the stack so it looks exactly as if this task had called 
+     * `perform_task_switch` in the past and is waiting to return!
+     * `perform_task_switch` pops 4 registers, then pops EIP (the return address).
+     */
+    *(--stack) = (uint32_t) entry_point; /* The EIP (The function it will run!) */
+    *(--stack) = 0; /* EBX */
+    *(--stack) = 0; /* ESI */
+    *(--stack) = 0; /* EDI */
+    *(--stack) = 0; /* EBP */
+
+    new_task->esp = (uint32_t) stack;
+    
+    /* Add this task to the end of the Scheduler's Ready Queue */
+    task_t* tmp = (task_t*)ready_queue;
+    while (tmp->next != NULL) {
+        tmp = tmp->next;
+    }
+    tmp->next = new_task;
+    
+    __asm__ volatile("sti");
+}
+
+void task_yield(void) {
+    __asm__ volatile("cli");
+    
+    /* If there is no next task, just keep running the current one */
+    if (current_task == NULL || current_task->next == NULL) {
+        __asm__ volatile("sti");
+        return;
+    }
+    
+    /* Grab the current task */
+    task_t* old_task = (task_t*)current_task;
+    
+    /* Move to the next task in the queue */
+    current_task = current_task->next;
+    
+    /* Put the old task at the very end of the queue (Round-Robin) */
+    task_t* tmp = (task_t*)current_task;
+    while (tmp->next != NULL) {
+        tmp = tmp->next;
+    }
+    tmp->next = old_task;
+    old_task->next = NULL;
+    
+    /* EXECUTE THE CONTEXT SWITCH! */
+    perform_task_switch(current_task->esp, (uint32_t)current_task->page_directory, &old_task->esp);
+    
+    __asm__ volatile("sti");
+}

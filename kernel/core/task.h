@@ -17,4 +17,10 @@ typedef struct task {
 /* Capture the current boot thread and turn it into PID 1 */
 void init_tasking(void);
 
+/* Create a brand new Task with its own stack */
+void create_task(void (*entry_point)(void));
+
+/* Voluntarily yield the CPU to the next Task in the queue */
+void task_yield(void);
+
 #endif

@@ -107,6 +107,18 @@ void keyboard_handler(void) {
     outb(0x20, 0x20);
 }
 
+void task2_main(void) {
+    while(1) {
+        terminal_print_string("Task 2 (PID 2) is running!\n");
+        
+        /* A simple delay loop to slow down the output */
+        for(int i = 0; i < 10000000; i++);
+        
+        /* Yield the CPU back to the queue (Task 1) */
+        task_yield();
+    }
+}
+
 /* kernel_main now takes the parameters we pushed in boot.S */
 void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
     init_gdt();
@@ -156,14 +168,22 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
     
     /* Initialize Tasking (Establish PID 1) */
     init_tasking();
-    terminal_print_string("Tasking Initialized. Kernel is now running as PID 1.\n");
+    terminal_print_string("Tasking Initialized. Kernel is now running as PID 1.\n\n");
 
-    terminal_print_string("\nType anywhere below:\n");
+    /* Spawn our very first new Task! */
+    create_task(task2_main);
+    terminal_print_string("Spawned Task 2 (PID 2) successfully!\n\n");
 
     /* Enable interrupts */
     __asm__ volatile ("sti");
 
     while (1) {
-        __asm__ volatile ("hlt");
+        terminal_print_string("Task 1 (PID 1) is running!\n");
+        
+        /* A simple delay loop */
+        for(int i = 0; i < 10000000; i++);
+        
+        /* Yield the CPU back to the queue (Task 2) */
+        task_yield();
     }
 }
