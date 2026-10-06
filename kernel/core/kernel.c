@@ -14,6 +14,7 @@
 #include "kheap.h"
 #include "task.h"
 #include "ide.h"
+#include "ofs.h"
 
 /* VGA Text Mode constants */
 static const size_t VGA_WIDTH = 80;
@@ -197,7 +198,29 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
 
     /* Initialize IDE Hard Drive */
     if (init_ide()) {
-        terminal_print_string("IDE Hard Drive detected and initialized successfully!\n\n");
+        terminal_print_string("IDE Hard Drive detected and initialized successfully!\n");
+        
+        /* Initialize Virtual File System */
+        if (!init_ofs()) {
+            terminal_print_string("Disk not formatted. Formatting OSISOS-FS...\n");
+            ofs_format();
+            
+            /* Write a test file! */
+            if (ofs_write_file("hello.txt", "Welcome to the OSISOS File System!")) {
+                terminal_print_string("Created 'hello.txt' successfully.\n");
+            }
+        } else {
+            terminal_print_string("OSISOS-FS detected and loaded.\n");
+        }
+        
+        /* Try to read the file! */
+        char file_buffer[512];
+        if (ofs_read_file("hello.txt", file_buffer)) {
+            terminal_print_string("Contents of hello.txt: '");
+            terminal_print_string(file_buffer);
+            terminal_print_string("'\n\n");
+        }
+        
     } else {
         terminal_print_string("WARNING: No IDE Hard Drive detected!\n\n");
     }

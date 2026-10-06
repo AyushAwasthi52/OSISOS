@@ -7,7 +7,7 @@ AS = gcc
 # Compiler flags for a freestanding kernel
 # -I flags tell the compiler where to look for header files (.h)
 CFLAGS = -m32 -ffreestanding -O2 -Wall -Wextra -fno-pie -mno-sse -mno-sse2 -mno-mmx -mno-80387 -fno-stack-protector \
-         -Iinclude -Iarch/i386 -Idrivers -Imm -Icore
+         -Iinclude -Iarch/i386 -Idrivers -Imm -Icore -Ifs
 
 # Linker flags
 LDFLAGS = -m32 -T linker.ld -nostdlib -lgcc -no-pie
@@ -19,7 +19,7 @@ OBJS = arch/i386/boot.o \
        arch/i386/pic.o arch/i386/paging_flush.o \
        arch/i386/switch.o arch/i386/usermode.o \
        drivers/keyboard.o drivers/timer.o drivers/ide.o \
-       mm/pmm.o mm/paging.o mm/kheap.o \
+       mm/pmm.o mm/paging.o mm/kheap.o fs/ofs.o \
        core/task.o core/kernel.o core/syscall.o
 
 all: osisos.bin
