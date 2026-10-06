@@ -108,14 +108,18 @@ void keyboard_handler(void) {
 }
 
 void task2_main(void) {
+    char anim[] = {'|', '/', '-', '\\'};
+    int i = 0;
     while(1) {
-        terminal_print_string("Task 2 (PID 2) is running!\n");
+        /* Task 2 will independently control a Yellow Spinner in the bottom right corner */
+        uint16_t* vga = (uint16_t*) 0xB8000;
+        vga[24 * 80 + 78] = (uint16_t) anim[i] | 0x0E00; // Yellow text
+        i = (i + 1) % 4;
         
-        /* A simple delay loop to slow down the output */
-        for(int i = 0; i < 10000000; i++);
+        /* Slow it down */
+        for(volatile int d = 0; d < 5000000; d++); 
         
-        /* Yield the CPU back to the queue (Task 1) */
-        task_yield();
+        /* NOTE: We removed task_yield() entirely! Task 2 refuses to give up the CPU. */
     }
 }
 
@@ -173,17 +177,22 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
     /* Spawn our very first new Task! */
     create_task(task2_main);
     terminal_print_string("Spawned Task 2 (PID 2) successfully!\n\n");
+    terminal_print_string("Preemptive Multitasking Active! Look at the bottom right corner.");
 
     /* Enable interrupts */
     __asm__ volatile ("sti");
 
+    char anim[] = {'|', '/', '-', '\\'};
+    int i = 0;
     while (1) {
-        terminal_print_string("Task 1 (PID 1) is running!\n");
+        /* Task 1 will independently control a Green Spinner in the bottom right corner */
+        uint16_t* vga = (uint16_t*) 0xB8000;
+        vga[24 * 80 + 76] = (uint16_t) anim[i] | 0x0A00; // Light Green text
+        i = (i + 1) % 4;
         
-        /* A simple delay loop */
-        for(int i = 0; i < 10000000; i++);
+        /* Slow it down */
+        for(volatile int d = 0; d < 5000000; d++); 
         
-        /* Yield the CPU back to the queue (Task 2) */
-        task_yield();
+        /* NOTE: We removed task_yield() entirely! Task 1 refuses to give up the CPU. */
     }
 }

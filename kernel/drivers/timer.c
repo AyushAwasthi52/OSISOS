@@ -1,5 +1,6 @@
 #include "timer.h"
 #include "io.h"
+#include "../core/task.h"
 #include <stddef.h>
 
 /* We borrow our print function from kernel.c for now */
@@ -32,6 +33,13 @@ void timer_handler(void) {
 
     /* We MUST send an End of Interrupt (EOI) to the Master PIC (Port 0x20) */
     outb(0x20, 0x20);
+
+    /* 
+     * FORCE A CONTEXT SWITCH! 
+     * This is called Preemptive Multitasking. 100 times a second, we rip control 
+     * away from the currently running task and give it to the next one!
+     */
+    task_yield();
 }
 
 void init_timer(uint32_t frequency) {
