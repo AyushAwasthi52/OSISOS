@@ -15,6 +15,7 @@
 #include "task.h"
 #include "ide.h"
 #include "ofs.h"
+#include "pci.h"
 
 /* VGA Text Mode constants */
 static const size_t VGA_WIDTH = 80;
@@ -223,6 +224,17 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
         
     } else {
         terminal_print_string("WARNING: No IDE Hard Drive detected!\n\n");
+    }
+
+    /* Initialize PCI Bus and scan for network cards */
+    init_pci();
+    if (e1000_found) {
+        terminal_print_string("Intel E1000 Gigabit Ethernet Card detected via PCI!\n");
+        terminal_print_string("MMIO Base Address: ");
+        terminal_print_hex(e1000_device.mmio_base);
+        terminal_print_string("\n\n");
+    } else {
+        terminal_print_string("WARNING: No E1000 Network Card found on PCI Bus!\n\n");
     }
 
     /* Spawn our very first new Task! */

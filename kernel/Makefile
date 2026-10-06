@@ -18,7 +18,7 @@ OBJS = arch/i386/boot.o \
        arch/i386/idt_flush.o arch/i386/idt.o \
        arch/i386/pic.o arch/i386/paging_flush.o \
        arch/i386/switch.o arch/i386/usermode.o \
-       drivers/keyboard.o drivers/timer.o drivers/ide.o \
+       drivers/keyboard.o drivers/timer.o drivers/ide.o drivers/pci.o \
        mm/pmm.o mm/paging.o mm/kheap.o fs/ofs.o \
        core/task.o core/kernel.o core/syscall.o
 
@@ -32,7 +32,7 @@ drive.img:
 	qemu-img create -f qcow2 drive.img 10M
 
 run: osisos.iso drive.img
-	qemu-system-i386 -m 32M -cdrom osisos.iso -hda drive.img
+	qemu-system-i386 -m 32M -cdrom osisos.iso -hda drive.img -netdev user,id=u1 -device e1000,netdev=u1
 
 # Pattern rule to automatically compile any .c file into a .o file
 %.o: %.c
