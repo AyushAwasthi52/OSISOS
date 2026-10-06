@@ -53,6 +53,20 @@ void init_tasking(void) {
 /* External reference to our new assembly context switcher */
 extern void perform_task_switch(uint32_t new_esp, uint32_t new_cr3, uint32_t* old_esp_ptr);
 
+/* Wrapper to ensure new tasks always start with interrupts enabled */
+void task_entry_wrapper(void (*entry_point)(void)) {
+    /* Enable interrupts so the Timer and Keyboard can fire! */
+    __asm__ volatile("sti");
+    
+    /* Jump into the actual task code */
+    entry_point();
+    
+    /* If the task function ever finishes and returns, trap it safely */
+    while(1) {
+        __asm__ volatile("hlt");
+    }
+}
+
 void create_task(void (*entry_point)(void)) {
     __asm__ volatile("cli");
     
@@ -67,11 +81,13 @@ void create_task(void (*entry_point)(void)) {
     uint32_t* stack = (uint32_t*)(stack_base + 4096); /* Top of the stack */
 
     /* 
-     * We must "fake" the stack so it looks exactly as if this task had called 
-     * `perform_task_switch` in the past and is waiting to return!
-     * `perform_task_switch` pops 4 registers, then pops EIP (the return address).
+     * Construct the C function call stack for task_entry_wrapper(entry_point)
      */
-    *(--stack) = (uint32_t) entry_point; /* The EIP (The function it will run!) */
+    *(--stack) = (uint32_t) entry_point;        /* Argument passed to the wrapper */
+    *(--stack) = 0;                             /* Fake return address for the wrapper */
+    
+    /* Construct the assembly stack for perform_task_switch */
+    *(--stack) = (uint32_t) task_entry_wrapper; /* The EIP (perform_task_switch returns to here) */
     *(--stack) = 0; /* EBX */
     *(--stack) = 0; /* ESI */
     *(--stack) = 0; /* EDI */
