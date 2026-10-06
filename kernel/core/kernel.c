@@ -238,7 +238,10 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
         if (init_e1000(e1000_device.mmio_base)) {
             terminal_print_string("E1000 Initialized! MAC Address: ");
             for (int i = 0; i < 6; i++) {
-                terminal_print_hex(e1000_mac[i]);
+                // Print a single byte in hex
+                const char* hex = "0123456789ABCDEF";
+                terminal_putchar(hex[(e1000_mac[i] >> 4) & 0x0F]);
+                terminal_putchar(hex[e1000_mac[i] & 0x0F]);
                 if (i < 5) terminal_putchar(':');
             }
             terminal_print_string("\n\n");
@@ -257,15 +260,70 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
 
     char anim[] = {'|', '/', '-', '\\'};
     int i = 0;
+    
+    /* 
+     * Network Chat Setup! 
+     * We will build a raw Ethernet Frame with a custom EtherType (0x1337).
+     * Destination MAC: FF:FF:FF:FF:FF:FF (Broadcast)
+     */
+    uint8_t* unaligned_eth = (uint8_t*) kmalloc(64 + 16);
+    uint8_t* eth_frame = (uint8_t*) (((uint32_t)unaligned_eth + 15) & ~15);
+    // Determine the exact MAC of the OTHER machine!
+    eth_frame[0] = 0x52;
+    eth_frame[1] = 0x54;
+    eth_frame[2] = 0x00;
+    eth_frame[3] = 0x12;
+    eth_frame[4] = 0x34;
+    // If I am .56, talk to .57. If I am .57, talk to .56!
+    eth_frame[5] = (e1000_mac[5] == 0x56) ? 0x57 : 0x56;
+    
+    for(int j=0; j<6; j++) eth_frame[6+j] = e1000_mac[j]; // Source
+    eth_frame[12] = 0x13; // Custom EtherType High
+    eth_frame[13] = 0x37; // Custom EtherType Low
+    
+    const char* msg = "Hello from OSISOS!";
+    for(int j=0; j<19; j++) eth_frame[14+j] = msg[j]; // Payload
+    
+    int send_timer = 0;
+
     while (1) {
         /* Task 1 will independently control a Green Spinner in the bottom right corner */
         uint16_t* vga = (uint16_t*) 0xB8000;
         vga[24 * 80 + 76] = (uint16_t) anim[i] | 0x0A00; // Light Green text
         i = (i + 1) % 4;
         
+        /* Check for received packets */
+        if (e1000_found) {
+            uint16_t rx_len;
+            uint8_t* rx_packet = (uint8_t*) e1000_receive_packet(&rx_len);
+            
+            if (rx_packet != NULL) {
+                // We got ANY packet!
+                terminal_print_string("RCVD PACKET (Len: ");
+                terminal_print_hex(rx_len);
+                terminal_print_string(")\n");
+                
+                // Check if it's our custom protocol
+                if (rx_len >= 14 && rx_packet[12] == 0x13 && rx_packet[13] == 0x37) {
+                    terminal_print_string("MSG: ");
+                    // Print payload (starts at byte 14)
+                    for (int p = 14; p < rx_len && rx_packet[p] != '\0'; p++) {
+                        terminal_putchar((char)rx_packet[p]);
+                    }
+                    terminal_print_string("\n");
+                }
+            }
+            
+            /* Send a broadcast packet every ~1 second */
+            send_timer++;
+            if (send_timer > 50) { // 50 * delay = ~1 sec
+                e1000_send_packet(eth_frame, 64);
+                send_timer = 0;
+                terminal_print_string("SENT PACKET\n");
+            }
+        }
+        
         /* Slow it down */
         for(volatile int d = 0; d < 5000000; d++); 
-        
-        /* NOTE: We removed task_yield() entirely! Task 1 refuses to give up the CPU. */
     }
 }

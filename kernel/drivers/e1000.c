@@ -38,7 +38,10 @@ static void read_mac_address(void) {
 
 static void init_tx(void) {
     // Allocate 16-byte aligned memory for the descriptors
-    tx_descs = (struct e1000_tx_desc*) kmalloc(sizeof(struct e1000_tx_desc) * E1000_NUM_TX_DESC);
+    // Since kmalloc returns a pointer just past a 12-byte header (which is 4-byte aligned),
+    // we must manually 16-byte align the pointer by allocating extra space!
+    void* unaligned_tx = kmalloc(sizeof(struct e1000_tx_desc) * E1000_NUM_TX_DESC + 16);
+    tx_descs = (struct e1000_tx_desc*) (((uint32_t)unaligned_tx + 15) & ~15);
     
     // Initialize all descriptors
     for (int i = 0; i < E1000_NUM_TX_DESC; i++) {
@@ -62,44 +65,84 @@ static void init_tx(void) {
     e1000_write_reg(REG_TCTRL, (1 << 1) | (1 << 3) | (0x0F << 4) | (0x3F << 12));
 }
 
+
+static void init_rx(void) {
+    void* unaligned_rx = kmalloc(sizeof(struct e1000_rx_desc) * E1000_NUM_RX_DESC + 16);
+    rx_descs = (struct e1000_rx_desc*) (((uint32_t)unaligned_rx + 15) & ~15);
+    
+    for (int i = 0; i < E1000_NUM_RX_DESC; i++) {
+        // Allocate a 2KB buffer for each packet. Align it for safety!
+        void* unaligned_buf = kmalloc(2048 + 16);
+        rx_descs[i].addr = (uint64_t)(uint32_t) (((uint32_t)unaligned_buf + 15) & ~15);
+        rx_descs[i].status = 0;
+    }
+    
+    // Initialize the Multicast Table Array (MTA)
+    // The E1000 requires this 128-entry array to be zeroed, otherwise it may drop packets!
+    for (int i = 0; i < 128; i++) {
+        e1000_write_reg(0x5200 + (i * 4), 0);
+    }
+    
+    e1000_write_reg(REG_RXDESCLO, (uint32_t)rx_descs);
+    e1000_write_reg(REG_RXDESCHI, 0);
+    e1000_write_reg(REG_RXDESCLEN, E1000_NUM_RX_DESC * 16);
+    e1000_write_reg(REG_RXDESCHEAD, 0);
+    e1000_write_reg(REG_RXDESCTAIL, E1000_NUM_RX_DESC - 1);
+    
+    // Enable RX (1), Unicast Promiscuous (3), Multicast Promiscuous (4), Broadcast Accept (15), Strip Ethernet CRC (26)
+    e1000_write_reg(REG_RCTRL, (1 << 1) | (1 << 3) | (1 << 4) | (1 << 15) | (1 << 26));
+}
+
 bool init_e1000(uint32_t mmio_base) {
     mmio_addr = mmio_base;
     
-    // Map the MMIO physical address into our Virtual Page Tables!
-    // The E1000 MMIO space is 128KB, so we need to map 32 pages (32 * 4096 = 131072)
     for (uint32_t i = 0; i < 32; i++) {
         map_page(mmio_base + (i * 4096), mmio_base + (i * 4096));
     }
     
-    // Read the MAC address
     read_mac_address();
     
-    // Turn on the Link
     uint32_t ctrl = e1000_read_reg(REG_CTRL);
-    e1000_write_reg(REG_CTRL, ctrl | (1 << 6)); // Set Link Up
+    e1000_write_reg(REG_CTRL, ctrl | (1 << 6));
     
-    // Initialize Transmit
     init_tx();
+    init_rx();
     
     return true;
 }
 
+static uint16_t rx_curr = 0;
+
+void* e1000_receive_packet(uint16_t* out_length) {
+    if (rx_descs[rx_curr].status & 0x01) {
+        // A packet is here!
+        *out_length = rx_descs[rx_curr].length;
+        void* packet_buffer = (void*)(uint32_t)rx_descs[rx_curr].addr;
+        
+        // Reset the descriptor so the hardware can use it again
+        rx_descs[rx_curr].status = 0;
+        
+        // Tell hardware we consumed it
+        e1000_write_reg(REG_RXDESCTAIL, rx_curr);
+        
+        // Advance
+        rx_curr = (rx_curr + 1) % E1000_NUM_RX_DESC;
+        return packet_buffer;
+    }
+    return NULL; // No packet available
+}
+
 void e1000_send_packet(void* packet, uint16_t length) {
-    // Place the packet physical address in the next TX descriptor
     tx_descs[tx_tail].addr = (uint64_t)(uint32_t)packet;
     tx_descs[tx_tail].length = length;
-    
-    // Command: End of Packet (1), Insert FCS (2), Report Status (8)
     tx_descs[tx_tail].cmd = (1 << 0) | (1 << 1) | (1 << 3); 
-    tx_descs[tx_tail].status = 0; // Clear the done status
+    tx_descs[tx_tail].status = 0; 
     
-    // Advance the tail pointer
     uint16_t old_tail = tx_tail;
     tx_tail = (tx_tail + 1) % E1000_NUM_TX_DESC;
     
-    // Tell the hardware that there is a new packet ready to send!
     e1000_write_reg(REG_TXDESCTAIL, tx_tail);
     
-    // Wait until the hardware marks the packet as sent (status bit 0 becomes 1)
-    while (!(tx_descs[old_tail].status & 1));
+    // Do NOT wait for the hardware to finish sending (status & 1).
+    // In QEMU multicast mode, this can sometimes hang if the link is not ready!
 }

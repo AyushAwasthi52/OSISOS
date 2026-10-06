@@ -31,7 +31,7 @@ struct e1000_tx_desc {
     uint16_t length;
     uint8_t cso;
     uint8_t cmd;
-    uint8_t status;
+    volatile uint8_t status;
     uint8_t css;
     uint16_t special;
 } __attribute__((packed));
@@ -41,7 +41,7 @@ struct e1000_rx_desc {
     uint64_t addr;
     uint16_t length;
     uint16_t checksum;
-    uint8_t status;
+    volatile uint8_t status;
     uint8_t errors;
     uint16_t special;
 } __attribute__((packed));
@@ -53,5 +53,8 @@ bool init_e1000(uint32_t mmio_base);
 
 /* Send a raw Ethernet frame */
 void e1000_send_packet(void* packet, uint16_t length);
+
+/* Receive a raw Ethernet frame (returns NULL if none available) */
+void* e1000_receive_packet(uint16_t* out_length);
 
 #endif

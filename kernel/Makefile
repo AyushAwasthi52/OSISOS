@@ -32,7 +32,13 @@ drive.img:
 	qemu-img create -f qcow2 drive.img 10M
 
 run: osisos.iso drive.img
-	qemu-system-i386 -m 32M -cdrom osisos.iso -hda drive.img -netdev user,id=u1 -device e1000,netdev=u1
+	qemu-system-i386 -m 32M -cdrom osisos.iso -hda drive.img -netdev socket,id=n1,listen=127.0.0.1:1234 -device e1000,netdev=n1,mac=52:54:00:12:34:56
+
+drive2.img:
+	qemu-img create -f qcow2 drive2.img 10M
+
+run2: osisos.iso drive2.img
+	qemu-system-i386 -m 32M -cdrom osisos.iso -hda drive2.img -netdev socket,id=n1,connect=127.0.0.1:1234 -device e1000,netdev=n1,mac=52:54:00:12:34:57
 
 # Pattern rule to automatically compile any .c file into a .o file
 %.o: %.c
