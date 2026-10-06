@@ -18,7 +18,7 @@ OBJS = arch/i386/boot.o \
        arch/i386/idt_flush.o arch/i386/idt.o \
        arch/i386/pic.o arch/i386/paging_flush.o \
        arch/i386/switch.o arch/i386/usermode.o \
-       drivers/keyboard.o drivers/timer.o \
+       drivers/keyboard.o drivers/timer.o drivers/ide.o \
        mm/pmm.o mm/paging.o mm/kheap.o \
        core/task.o core/kernel.o core/syscall.o
 
@@ -28,8 +28,11 @@ all: osisos.bin
 iso: osisos.iso
 
 # A convenience target to run our OS with exactly 32 MB of RAM constraint
-run: osisos.iso
-	qemu-system-i386 -m 32M -cdrom osisos.iso
+drive.img:
+	qemu-img create -f qcow2 drive.img 10M
+
+run: osisos.iso drive.img
+	qemu-system-i386 -m 32M -cdrom osisos.iso -hda drive.img
 
 # Pattern rule to automatically compile any .c file into a .o file
 %.o: %.c

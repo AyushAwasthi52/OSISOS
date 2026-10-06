@@ -13,6 +13,7 @@
 #include "paging.h"
 #include "kheap.h"
 #include "task.h"
+#include "ide.h"
 
 /* VGA Text Mode constants */
 static const size_t VGA_WIDTH = 80;
@@ -192,7 +193,14 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
     
     /* Initialize Tasking (Establish PID 1) */
     init_tasking();
-    terminal_print_string("Tasking Initialized. Kernel is now running as PID 1.\n\n");
+    terminal_print_string("Tasking Initialized. Kernel is now running as PID 1.\n");
+
+    /* Initialize IDE Hard Drive */
+    if (init_ide()) {
+        terminal_print_string("IDE Hard Drive detected and initialized successfully!\n\n");
+    } else {
+        terminal_print_string("WARNING: No IDE Hard Drive detected!\n\n");
+    }
 
     /* Spawn our very first new Task! */
     create_task(task2_main);
