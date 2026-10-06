@@ -7,6 +7,7 @@
 #include "pic.h"
 #include "io.h"
 #include "keyboard.h"
+#include "timer.h"
 
 /* VGA Text Mode constants */
 static const size_t VGA_WIDTH = 80;
@@ -80,6 +81,9 @@ void kernel_main(void) {
     init_gdt();
     init_idt();
     pic_remap();
+    
+    /* Initialize the system timer to fire 100 times per second */
+    init_timer(100);
 
     for (size_t y = 0; y < VGA_HEIGHT; y++) {
         for (size_t x = 0; x < VGA_WIDTH; x++) {

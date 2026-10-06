@@ -17,7 +17,7 @@ CFLAGS = -m32 -ffreestanding -O2 -Wall -Wextra -fno-pie -mno-sse -mno-sse2 -mno-
 LDFLAGS = -m32 -T linker.ld -nostdlib -lgcc -no-pie
 
 # Files to build
-OBJS = boot.o gdt_flush.o gdt.o idt_flush.o idt.o pic.o keyboard.o kernel.o
+OBJS = boot.o gdt_flush.o gdt.o idt_flush.o idt.o pic.o keyboard.o timer.o kernel.o
 
 all: osisos.bin
 
@@ -48,6 +48,10 @@ pic.o: pic.c
 # Compile keyboard.c
 keyboard.o: keyboard.c
 	$(CC) $(CFLAGS) -c keyboard.c -o keyboard.o
+
+# Compile timer.c
+timer.o: timer.c
+	$(CC) $(CFLAGS) -c timer.c -o timer.o
 
 # Compile kernel.c
 kernel.o: kernel.c

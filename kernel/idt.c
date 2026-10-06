@@ -3,6 +3,7 @@
 // External assembly functions
 extern void idt_flush(uint32_t);
 extern void isr0(void); // Our Divide-By-Zero handler from Assembly
+extern void isr32(void); // Timer Interrupt handler from Assembly
 extern void isr33(void); // Keyboard Interrupt handler from Assembly
 
 idt_entry_t idt_entries[256];
@@ -27,6 +28,9 @@ void init_idt(void) {
 
     // Map Exception 0 (Divide by Zero)
     idt_set_gate(0, (uint32_t)isr0, 0x08, 0x8E);
+
+    // Map Hardware Interrupt 32 (Timer IRQ 0)
+    idt_set_gate(32, (uint32_t)isr32, 0x08, 0x8E);
 
     // Map Hardware Interrupt 33 (Keyboard IRQ 1)
     idt_set_gate(33, (uint32_t)isr33, 0x08, 0x8E);

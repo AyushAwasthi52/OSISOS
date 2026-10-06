@@ -33,13 +33,10 @@ void pic_remap(void) {
     outb(PIC2_DATA, 0x01);
     
     /* 
-     * Unmask ONLY the keyboard interrupt (IRQ 1) on the Master PIC.
-     * Binary 11111101 is Hex 0xFD. This sets bit 1 to '0' (unmasked) and all others to '1' (masked).
+     * Unmask the system timer (IRQ 0) and the keyboard interrupt (IRQ 1).
+     * Binary 11111100 is Hex 0xFC. This sets bit 0 and bit 1 to '0' (unmasked).
      * We mask the entire Slave PIC (0xFF).
-     * 
-     * If we set this to 0x00, the System Timer (IRQ 0) fires 18 times a second.
-     * Because we haven't written a handler for IRQ 0 yet, the CPU would triple-fault immediately!
      */
-    outb(PIC1_DATA, 0xFD);
+    outb(PIC1_DATA, 0xFC);
     outb(PIC2_DATA, 0xFF);
 }
