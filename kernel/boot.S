@@ -42,7 +42,17 @@ _start:
     /* Set up the stack pointer (esp) to point to our allocated stack space. */
     mov $stack_top, %esp
 
-    /* Call the high-level C code. */
+    /* 
+     * In the standard C calling convention (cdecl), function arguments are 
+     * pushed to the stack in reverse order.
+     * GRUB stores a pointer to the multiboot_info struct in %ebx.
+     * GRUB stores the multiboot magic number in %eax.
+     * So we push %ebx (argument 2) then push %eax (argument 1).
+     */
+    push %ebx
+    push %eax
+
+    /* Call the high-level C code: kernel_main(magic, multiboot_info_addr) */
     call kernel_main
 
     /* 

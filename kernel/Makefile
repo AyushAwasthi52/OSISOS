@@ -9,7 +9,7 @@ AS = gcc
 # -ffreestanding: Assumes no standard library exists (no malloc, printf, etc.)
 # -O2: Optimization level
 # -Wall -Wextra: Enable warnings
-CFLAGS = -m32 -ffreestanding -O2 -Wall -Wextra -fno-pie -mno-sse -mno-sse2 -mno-mmx -mno-80387
+CFLAGS = -m32 -ffreestanding -O2 -Wall -Wextra -fno-pie -mno-sse -mno-sse2 -mno-mmx -mno-80387 -fno-stack-protector
 
 # Linker flags
 # -nostdlib: Do not link the standard C library
@@ -20,6 +20,10 @@ LDFLAGS = -m32 -T linker.ld -nostdlib -lgcc -no-pie
 OBJS = boot.o gdt_flush.o gdt.o idt_flush.o idt.o pic.o keyboard.o timer.o kernel.o
 
 all: osisos.bin
+
+# A convenience target to run our OS with exactly 32 MB of RAM constraint
+run: osisos.iso
+	qemu-system-i386 -m 32M -cdrom osisos.iso
 
 # Assemble boot.S
 boot.o: boot.S

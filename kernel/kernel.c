@@ -8,6 +8,7 @@
 #include "io.h"
 #include "keyboard.h"
 #include "timer.h"
+#include "multiboot.h"
 
 /* VGA Text Mode constants */
 static const size_t VGA_WIDTH = 80;
@@ -26,10 +27,7 @@ void kernel_print(const char* message, size_t color, size_t row) {
     }
 }
 
-/* 
- * Prints a single character to the screen and advances the cursor.
- * Handles newlines and basic backspacing!
- */
+/* Prints a single character and advances the cursor */
 void terminal_putchar(char c) {
     if (c == '\n') {
         terminal_col = 0;
@@ -37,7 +35,6 @@ void terminal_putchar(char c) {
     } else if (c == '\b') {
         if (terminal_col > 0) {
             terminal_col--;
-            // Erase the character by printing a space over it
             size_t index = terminal_row * VGA_WIDTH + terminal_col;
             terminal_buffer[index] = (uint16_t) ' ' | (uint16_t) 0x0F << 8;
         }
@@ -45,17 +42,38 @@ void terminal_putchar(char c) {
         size_t index = terminal_row * VGA_WIDTH + terminal_col;
         terminal_buffer[index] = (uint16_t) c | (uint16_t) 0x0F << 8;
         terminal_col++;
-        // Wrap to the next line if we hit the edge
         if (terminal_col >= VGA_WIDTH) {
             terminal_col = 0;
             terminal_row++;
         }
     }
-
-    // Basic wrap around if we hit the bottom of the screen (for now)
     if (terminal_row >= VGA_HEIGHT) {
         terminal_row = 3; 
     }
+}
+
+/* Helper to print strings sequentially */
+void terminal_print_string(const char* str) {
+    for (size_t i = 0; str[i] != '\0'; i++) {
+        terminal_putchar(str[i]);
+    }
+}
+
+/* Helper to convert an integer to a decimal string and print it */
+void terminal_print_dec(uint32_t val) {
+    if (val == 0) {
+        terminal_putchar('0');
+        return;
+    }
+    char buffer[11]; // Max uint32_t is 4294967295 (10 digits) + null terminator
+    int i = 9;
+    buffer[10] = '\0';
+    while (val > 0) {
+        buffer[i] = '0' + (val % 10);
+        val /= 10;
+        i--;
+    }
+    terminal_print_string(&buffer[i + 1]);
 }
 
 void isr0_handler(void) {
@@ -64,27 +82,21 @@ void isr0_handler(void) {
 
 void keyboard_handler(void) {
     uint8_t scancode = inb(0x60);
-
-    /* Convert the raw scancode to an ASCII character */
     char ascii = keyboard_scancode_to_ascii(scancode);
-    
-    /* If it is a printable character (not 0), print it to the screen! */
     if (ascii != 0) {
         terminal_putchar(ascii);
     }
-
-    /* End of Interrupt */
     outb(0x20, 0x20);
 }
 
-void kernel_main(void) {
+/* kernel_main now takes the parameters we pushed in boot.S */
+void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
     init_gdt();
     init_idt();
     pic_remap();
-    
-    /* Initialize the system timer to fire 100 times per second */
     init_timer(100);
 
+    /* Clear the screen */
     for (size_t y = 0; y < VGA_HEIGHT; y++) {
         for (size_t x = 0; x < VGA_WIDTH; x++) {
             const size_t index = y * VGA_WIDTH + x;
@@ -93,8 +105,30 @@ void kernel_main(void) {
     }
 
     kernel_print("OSISOS Kernel Booted Successfully!", 0x0F, 0);
-    kernel_print("Keyboard driver loaded. Type freely below!", 0x0B, 1);
 
+    /* Verify that we were booted by a Multiboot-compliant bootloader (like GRUB) */
+    if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
+        kernel_print("CRITICAL ERROR: Invalid Multiboot Magic Number!", 0x0C, 1);
+        return; // Halt system
+    }
+
+    /* Cast the memory address GRUB gave us into our C structure pointer */
+    multiboot_info_t* mbd = (multiboot_info_t*) multiboot_addr;
+
+    /* Print the total system RAM */
+    terminal_print_string("Total System RAM Installed: ");
+    
+    // GRUB tells us how much memory is above the 1MB mark in the mem_upper field (in KB).
+    // Lower memory is usually just 640KB. Total RAM is roughly mem_upper + 1MB.
+    uint32_t total_memory_kb = mbd->mem_lower + mbd->mem_upper;
+    uint32_t total_memory_mb = total_memory_kb / 1024;
+    
+    terminal_print_dec(total_memory_mb);
+    terminal_print_string(" MB\n\n");
+
+    terminal_print_string("Type anywhere below:\n");
+
+    /* Enable interrupts */
     __asm__ volatile ("sti");
 
     while (1) {
