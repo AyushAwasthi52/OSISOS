@@ -10,6 +10,7 @@
 #include "timer.h"
 #include "multiboot.h"
 #include "pmm.h"
+#include "paging.h"
 
 /* VGA Text Mode constants */
 static const size_t VGA_WIDTH = 80;
@@ -143,25 +144,9 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
     init_pmm(total_memory_kb);
     terminal_print_string("PMM Initialized. Reserved first 4MB for Kernel.\n");
 
-    /* Test Allocating Memory! */
-    void* block1 = pmm_alloc_block();
-    terminal_print_string("Allocated 4KB Block 1 at Physical Address: ");
-    terminal_print_hex((uint32_t)block1);
-    terminal_putchar('\n');
-
-    void* block2 = pmm_alloc_block();
-    terminal_print_string("Allocated 4KB Block 2 at Physical Address: ");
-    terminal_print_hex((uint32_t)block2);
-    terminal_putchar('\n');
-    
-    /* Test freeing block 1 */
-    pmm_free_block(block1);
-    
-    /* Allocate block 3, it should instantly reuse block 1's address! */
-    void* block3 = pmm_alloc_block();
-    terminal_print_string("Allocated 4KB Block 3 at Physical Address: ");
-    terminal_print_hex((uint32_t)block3);
-    terminal_putchar('\n');
+    /* Initialize Virtual Memory (Paging) */
+    init_paging();
+    terminal_print_string("Paging Enabled! Virtual Memory is now active.\n");
 
     terminal_print_string("\nType anywhere below:\n");
 

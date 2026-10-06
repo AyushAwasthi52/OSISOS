@@ -16,9 +16,9 @@ LDFLAGS = -m32 -T linker.ld -nostdlib -lgcc -no-pie
 OBJS = arch/i386/boot.o \
        arch/i386/gdt_flush.o arch/i386/gdt.o \
        arch/i386/idt_flush.o arch/i386/idt.o \
-       arch/i386/pic.o \
+       arch/i386/pic.o arch/i386/paging_flush.o \
        drivers/keyboard.o drivers/timer.o \
-       mm/pmm.o \
+       mm/pmm.o mm/paging.o \
        core/kernel.o
 
 all: osisos.bin
