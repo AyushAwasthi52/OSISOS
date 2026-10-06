@@ -9,6 +9,7 @@
 #include "keyboard.h"
 #include "timer.h"
 #include "multiboot.h"
+#include "pmm.h"
 
 /* VGA Text Mode constants */
 static const size_t VGA_WIDTH = 80;
@@ -57,6 +58,20 @@ void terminal_print_string(const char* str) {
     for (size_t i = 0; str[i] != '\0'; i++) {
         terminal_putchar(str[i]);
     }
+}
+
+/* Helper to convert an integer to a Hexadecimal string and print it */
+void terminal_print_hex(uint32_t val) {
+    terminal_print_string("0x");
+    char buffer[9];
+    buffer[8] = '\0';
+    for (int i = 7; i >= 0; i--) {
+        uint8_t nibble = val & 0x0F;
+        if (nibble < 10) buffer[i] = '0' + nibble;
+        else buffer[i] = 'A' + (nibble - 10);
+        val >>= 4;
+    }
+    terminal_print_string(buffer);
 }
 
 /* Helper to convert an integer to a decimal string and print it */
@@ -118,15 +133,37 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
     /* Print the total system RAM */
     terminal_print_string("Total System RAM Installed: ");
     
-    // GRUB tells us how much memory is above the 1MB mark in the mem_upper field (in KB).
-    // Lower memory is usually just 640KB. Total RAM is roughly mem_upper + 1MB.
     uint32_t total_memory_kb = mbd->mem_lower + mbd->mem_upper;
     uint32_t total_memory_mb = total_memory_kb / 1024;
     
     terminal_print_dec(total_memory_mb);
     terminal_print_string(" MB\n\n");
 
-    terminal_print_string("Type anywhere below:\n");
+    /* Initialize the Physical Memory Manager */
+    init_pmm(total_memory_kb);
+    terminal_print_string("PMM Initialized. Reserved first 4MB for Kernel.\n");
+
+    /* Test Allocating Memory! */
+    void* block1 = pmm_alloc_block();
+    terminal_print_string("Allocated 4KB Block 1 at Physical Address: ");
+    terminal_print_hex((uint32_t)block1);
+    terminal_putchar('\n');
+
+    void* block2 = pmm_alloc_block();
+    terminal_print_string("Allocated 4KB Block 2 at Physical Address: ");
+    terminal_print_hex((uint32_t)block2);
+    terminal_putchar('\n');
+    
+    /* Test freeing block 1 */
+    pmm_free_block(block1);
+    
+    /* Allocate block 3, it should instantly reuse block 1's address! */
+    void* block3 = pmm_alloc_block();
+    terminal_print_string("Allocated 4KB Block 3 at Physical Address: ");
+    terminal_print_hex((uint32_t)block3);
+    terminal_putchar('\n');
+
+    terminal_print_string("\nType anywhere below:\n");
 
     /* Enable interrupts */
     __asm__ volatile ("sti");
