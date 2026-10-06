@@ -25,3 +25,13 @@ gdt_flush:
     jmp $0x08, $flush
 flush:
     ret
+
+.global tss_flush
+tss_flush:
+    /* Load the index of our TSS structure into the TR (Task Register). 
+     * The TSS is the 5th entry in the GDT, so its offset is 5 * 8 = 40 (0x28).
+     * The bottom two bits are set to 3 for Ring 3 (User Mode), so 0x28 | 3 = 0x2B.
+     */
+    mov $0x2B, %ax
+    ltr %ax
+    ret
