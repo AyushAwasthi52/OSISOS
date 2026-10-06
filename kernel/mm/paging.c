@@ -51,3 +51,26 @@ void init_paging(void) {
     /* 4. Turn on Paging! (Set the highest bit in CR0) */
     enable_paging();
 }
+
+/* Map a single physical page (4KB) to a virtual page */
+void map_page(uint32_t physical_addr, uint32_t virtual_addr) {
+    uint32_t pd_index = virtual_addr >> 22;
+    uint32_t pt_index = (virtual_addr >> 12) & 0x03FF;
+    
+    // Check if the page table exists
+    if ((kernel_page_directory[pd_index] & 1) == 0) {
+        // Allocate a new page table
+        uint32_t* new_pt = (uint32_t*) pmm_alloc_block();
+        memset32(new_pt, 0, 1024);
+        kernel_page_directory[pd_index] = ((uint32_t)new_pt) | 7;
+    }
+    
+    // Get the page table pointer
+    uint32_t* page_table = (uint32_t*)(kernel_page_directory[pd_index] & ~0xFFF);
+    
+    // Map the page
+    page_table[pt_index] = (physical_addr & ~0xFFF) | 7; // Present, R/W, User
+    
+    // Flush the TLB
+    __asm__ volatile ("invlpg (%0)" : : "r" (virtual_addr) : "memory");
+}

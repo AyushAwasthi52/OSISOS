@@ -16,6 +16,7 @@
 #include "ide.h"
 #include "ofs.h"
 #include "pci.h"
+#include "e1000.h"
 
 /* VGA Text Mode constants */
 static const size_t VGA_WIDTH = 80;
@@ -232,7 +233,16 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
         terminal_print_string("Intel E1000 Gigabit Ethernet Card detected via PCI!\n");
         terminal_print_string("MMIO Base Address: ");
         terminal_print_hex(e1000_device.mmio_base);
-        terminal_print_string("\n\n");
+        terminal_print_string("\n");
+        
+        if (init_e1000(e1000_device.mmio_base)) {
+            terminal_print_string("E1000 Initialized! MAC Address: ");
+            for (int i = 0; i < 6; i++) {
+                terminal_print_hex(e1000_mac[i]);
+                if (i < 5) terminal_putchar(':');
+            }
+            terminal_print_string("\n\n");
+        }
     } else {
         terminal_print_string("WARNING: No E1000 Network Card found on PCI Bus!\n\n");
     }
