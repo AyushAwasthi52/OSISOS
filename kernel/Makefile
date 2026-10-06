@@ -5,73 +5,45 @@ CC = gcc
 AS = gcc
 
 # Compiler flags for a freestanding kernel
-# -m32: Compile for 32-bit architecture
-# -ffreestanding: Assumes no standard library exists (no malloc, printf, etc.)
-# -O2: Optimization level
-# -Wall -Wextra: Enable warnings
-CFLAGS = -m32 -ffreestanding -O2 -Wall -Wextra -fno-pie -mno-sse -mno-sse2 -mno-mmx -mno-80387 -fno-stack-protector
+# -I flags tell the compiler where to look for header files (.h)
+CFLAGS = -m32 -ffreestanding -O2 -Wall -Wextra -fno-pie -mno-sse -mno-sse2 -mno-mmx -mno-80387 -fno-stack-protector \
+         -Iinclude -Iarch/i386 -Idrivers -Imm -Icore
 
 # Linker flags
-# -nostdlib: Do not link the standard C library
-# -T linker.ld: Use our custom linker script
 LDFLAGS = -m32 -T linker.ld -nostdlib -lgcc -no-pie
 
-# Files to build
-OBJS = boot.o gdt_flush.o gdt.o idt_flush.o idt.o pic.o keyboard.o timer.o pmm.o kernel.o
+# Files to build (Now organized into subdirectories)
+OBJS = arch/i386/boot.o \
+       arch/i386/gdt_flush.o arch/i386/gdt.o \
+       arch/i386/idt_flush.o arch/i386/idt.o \
+       arch/i386/pic.o \
+       drivers/keyboard.o drivers/timer.o \
+       mm/pmm.o \
+       core/kernel.o
 
 all: osisos.bin
+
+# Convenience target to build the ISO
+iso: osisos.iso
 
 # A convenience target to run our OS with exactly 32 MB of RAM constraint
 run: osisos.iso
 	qemu-system-i386 -m 32M -cdrom osisos.iso
 
-# Assemble boot.S
-boot.o: boot.S
-	$(AS) -m32 -c boot.S -o boot.o
+# Pattern rule to automatically compile any .c file into a .o file
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
-# Assemble gdt_flush.S
-gdt_flush.o: gdt_flush.S
-	$(AS) -m32 -c gdt_flush.S -o gdt_flush.o
+# Pattern rule to automatically assemble any .S file into a .o file
+%.o: %.S
+	$(AS) -m32 -c $< -o $@
 
-# Compile gdt.c
-gdt.o: gdt.c
-	$(CC) $(CFLAGS) -c gdt.c -o gdt.o
-
-# Assemble idt_flush.S
-idt_flush.o: idt_flush.S
-	$(AS) -m32 -c idt_flush.S -o idt_flush.o
-
-# Compile idt.c
-idt.o: idt.c
-	$(CC) $(CFLAGS) -c idt.c -o idt.o
-
-# Compile pic.c
-pic.o: pic.c
-	$(CC) $(CFLAGS) -c pic.c -o pic.o
-
-# Compile keyboard.c
-keyboard.o: keyboard.c
-	$(CC) $(CFLAGS) -c keyboard.c -o keyboard.o
-
-# Compile timer.c
-timer.o: timer.c
-	$(CC) $(CFLAGS) -c timer.c -o timer.o
-
-# Compile pmm.c
-pmm.o: pmm.c
-	$(CC) $(CFLAGS) -c pmm.c -o pmm.o
-
-# Compile kernel.c
-kernel.o: kernel.c
-	$(CC) $(CFLAGS) -c kernel.c -o kernel.o
-
-# Link into the final executable
+# Link all the object files together to create the final kernel binary
 osisos.bin: $(OBJS)
 	$(CC) $(LDFLAGS) $(OBJS) -o osisos.bin
 
-# Target to build a bootable ISO using GRUB
-# This requires 'grub-mkrescue' and 'xorriso' to be installed on the host.
-iso: osisos.bin
+# Generate the bootable ISO file
+osisos.iso: osisos.bin
 	mkdir -p isodir/boot/grub
 	cp osisos.bin isodir/boot/osisos.bin
 	echo 'menuentry "OSISOS" {' > isodir/boot/grub/grub.cfg
@@ -79,6 +51,7 @@ iso: osisos.bin
 	echo '}' >> isodir/boot/grub/grub.cfg
 	grub-mkrescue -o osisos.iso isodir
 
+# Clean up all compiled files
 clean:
 	rm -f $(OBJS) osisos.bin osisos.iso
 	rm -rf isodir
