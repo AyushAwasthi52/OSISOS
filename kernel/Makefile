@@ -20,7 +20,7 @@ OBJS = arch/i386/boot.o \
        arch/i386/switch.o arch/i386/usermode.o \
        drivers/keyboard.o drivers/timer.o \
        mm/pmm.o mm/paging.o mm/kheap.o \
-       core/task.o core/kernel.o
+       core/task.o core/kernel.o core/syscall.o
 
 all: osisos.bin
 

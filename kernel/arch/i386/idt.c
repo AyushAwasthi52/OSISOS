@@ -5,6 +5,7 @@ extern void idt_flush(uint32_t);
 extern void isr0(void); // Our Divide-By-Zero handler from Assembly
 extern void isr32(void); // Timer Interrupt handler from Assembly
 extern void isr33(void); // Keyboard Interrupt handler from Assembly
+extern void isr128(void); // System Call Handler from Assembly
 
 idt_entry_t idt_entries[256];
 idt_ptr_t   idt_ptr;
@@ -32,8 +33,13 @@ void init_idt(void) {
     // Map Hardware Interrupt 32 (Timer IRQ 0)
     idt_set_gate(32, (uint32_t)isr32, 0x08, 0x8E);
 
-    // Map Hardware Interrupt 33 (Keyboard IRQ 1)
+// Map Hardware Interrupt 33 (Keyboard IRQ 1)
     idt_set_gate(33, (uint32_t)isr33, 0x08, 0x8E);
+
+    // Map System Call Interrupt (Software Interrupt 128 / 0x80)
+    // CRITICAL: Notice the flags are 0xEE instead of 0x8E!
+    // This explicitly grants Ring 3 (User Space) permission to trigger this interrupt.
+    idt_set_gate(128, (uint32_t)isr128, 0x08, 0xEE);
 
     // Tell the CPU where the IDT is
     idt_flush((uint32_t)&idt_ptr);
