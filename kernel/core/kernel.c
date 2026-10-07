@@ -35,6 +35,21 @@ void kernel_print(const char* message, size_t color, size_t row) {
     }
 }
 
+/* Scrolls the terminal up by one line */
+void terminal_scroll(void) {
+    // Move all lines up by one
+    for (size_t y = 1; y < VGA_HEIGHT; y++) {
+        for (size_t x = 0; x < VGA_WIDTH; x++) {
+            terminal_buffer[(y - 1) * VGA_WIDTH + x] = terminal_buffer[y * VGA_WIDTH + x];
+        }
+    }
+    // Clear the last line
+    for (size_t x = 0; x < VGA_WIDTH; x++) {
+        terminal_buffer[(VGA_HEIGHT - 1) * VGA_WIDTH + x] = (uint16_t) ' ' | (uint16_t) 0x0F << 8;
+    }
+    terminal_row = VGA_HEIGHT - 1;
+}
+
 /* Prints a single character and advances the cursor */
 void terminal_putchar(char c) {
     if (c == '\n') {
@@ -43,6 +58,11 @@ void terminal_putchar(char c) {
     } else if (c == '\b') {
         if (terminal_col > 0) {
             terminal_col--;
+            size_t index = terminal_row * VGA_WIDTH + terminal_col;
+            terminal_buffer[index] = (uint16_t) ' ' | (uint16_t) 0x0F << 8;
+        } else if (terminal_row > 0) {
+            terminal_row--;
+            terminal_col = VGA_WIDTH - 1;
             size_t index = terminal_row * VGA_WIDTH + terminal_col;
             terminal_buffer[index] = (uint16_t) ' ' | (uint16_t) 0x0F << 8;
         }
@@ -55,8 +75,9 @@ void terminal_putchar(char c) {
             terminal_row++;
         }
     }
+    
     if (terminal_row >= VGA_HEIGHT) {
-        terminal_row = 3; 
+        terminal_scroll();
     }
 }
 
@@ -106,11 +127,13 @@ void keyboard_handler(void) {
     uint8_t scancode = inb(0x60);
     char ascii = keyboard_scancode_to_ascii(scancode);
     if (ascii != 0) {
-        terminal_putchar(ascii);
+        // Push to buffer instead of printing directly!
+        keyboard_push_char(ascii);
     }
     outb(0x20, 0x20);
 }
 
+#include "shell.h"
 #include "syscall.h"
 
 /* This function will run entirely in Ring 3 (User Space)! */
@@ -134,17 +157,32 @@ void user_program(void) {
     }
 }
 
-/* This is a Ring 0 Kernel thread that prepares the User Space environment */
-void task2_main(void) {
-    /* Allocate 4KB for the User Mode stack using our heap */
-    uint32_t user_stack_base = (uint32_t) kmalloc(4096);
-    uint32_t user_stack_top  = user_stack_base + 4096;
-    
-    /* 
-     * Perform the mystical privilege downgrade!
-     * This function will never return. We will permanently drop into Ring 3!
-     */
-    jump_usermode((uint32_t)user_program, user_stack_top);
+/* 
+ * This is Task 2! 
+ * It runs in kernel mode (Ring 0) and handles incoming network packets.
+ */
+void network_task(void) {
+    while(1) {
+        if (e1000_found) {
+            uint16_t rx_len;
+            uint8_t* rx_packet = (uint8_t*) e1000_receive_packet(&rx_len);
+            
+            if (rx_packet != NULL) {
+                // Check if it's our custom protocol
+                if (rx_len >= 14 && rx_packet[12] == 0x13 && rx_packet[13] == 0x37) {
+                    terminal_print_string("\n[Network] MSG: ");
+                    // Print payload (starts at byte 14)
+                    for (int p = 14; p < rx_len && rx_packet[p] != '\0'; p++) {
+                        terminal_putchar((char)rx_packet[p]);
+                    }
+                    terminal_print_string("\n> ");
+                }
+            }
+        }
+        
+        /* Yield to let shell run smoothly */
+        for(volatile int d = 0; d < 100000; d++); 
+    }
 }
 
 /* kernel_main now takes the parameters we pushed in boot.S */
@@ -215,14 +253,6 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
             terminal_print_string("OSISOS-FS detected and loaded.\n");
         }
         
-        /* Try to read the file! */
-        char file_buffer[512];
-        if (ofs_read_file("hello.txt", file_buffer)) {
-            terminal_print_string("Contents of hello.txt: '");
-            terminal_print_string(file_buffer);
-            terminal_print_string("'\n\n");
-        }
-        
     } else {
         terminal_print_string("WARNING: No IDE Hard Drive detected!\n\n");
     }
@@ -250,80 +280,13 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
         terminal_print_string("WARNING: No E1000 Network Card found on PCI Bus!\n\n");
     }
 
-    /* Spawn our very first new Task! */
-    create_task(task2_main);
-    terminal_print_string("Spawned Task 2 (PID 2) successfully!\n\n");
-    terminal_print_string("Preemptive Multitasking Active! Look at the bottom right corner.");
+    /* Spawn our network task! */
+    create_task(network_task);
+    terminal_print_string("Spawned Background Network Task (PID 2)!\n");
 
     /* Enable interrupts */
     __asm__ volatile ("sti");
 
-    char anim[] = {'|', '/', '-', '\\'};
-    int i = 0;
-    
-    /* 
-     * Network Chat Setup! 
-     * We will build a raw Ethernet Frame with a custom EtherType (0x1337).
-     * Destination MAC: FF:FF:FF:FF:FF:FF (Broadcast)
-     */
-    uint8_t* unaligned_eth = (uint8_t*) kmalloc(64 + 16);
-    uint8_t* eth_frame = (uint8_t*) (((uint32_t)unaligned_eth + 15) & ~15);
-    // Determine the exact MAC of the OTHER machine!
-    eth_frame[0] = 0x52;
-    eth_frame[1] = 0x54;
-    eth_frame[2] = 0x00;
-    eth_frame[3] = 0x12;
-    eth_frame[4] = 0x34;
-    // If I am .56, talk to .57. If I am .57, talk to .56!
-    eth_frame[5] = (e1000_mac[5] == 0x56) ? 0x57 : 0x56;
-    
-    for(int j=0; j<6; j++) eth_frame[6+j] = e1000_mac[j]; // Source
-    eth_frame[12] = 0x13; // Custom EtherType High
-    eth_frame[13] = 0x37; // Custom EtherType Low
-    
-    const char* msg = "Hello from OSISOS!";
-    for(int j=0; j<19; j++) eth_frame[14+j] = msg[j]; // Payload
-    
-    int send_timer = 0;
-
-    while (1) {
-        /* Task 1 will independently control a Green Spinner in the bottom right corner */
-        uint16_t* vga = (uint16_t*) 0xB8000;
-        vga[24 * 80 + 76] = (uint16_t) anim[i] | 0x0A00; // Light Green text
-        i = (i + 1) % 4;
-        
-        /* Check for received packets */
-        if (e1000_found) {
-            uint16_t rx_len;
-            uint8_t* rx_packet = (uint8_t*) e1000_receive_packet(&rx_len);
-            
-            if (rx_packet != NULL) {
-                // We got ANY packet!
-                terminal_print_string("RCVD PACKET (Len: ");
-                terminal_print_hex(rx_len);
-                terminal_print_string(")\n");
-                
-                // Check if it's our custom protocol
-                if (rx_len >= 14 && rx_packet[12] == 0x13 && rx_packet[13] == 0x37) {
-                    terminal_print_string("MSG: ");
-                    // Print payload (starts at byte 14)
-                    for (int p = 14; p < rx_len && rx_packet[p] != '\0'; p++) {
-                        terminal_putchar((char)rx_packet[p]);
-                    }
-                    terminal_print_string("\n");
-                }
-            }
-            
-            /* Send a broadcast packet every ~1 second */
-            send_timer++;
-            if (send_timer > 50) { // 50 * delay = ~1 sec
-                e1000_send_packet(eth_frame, 64);
-                send_timer = 0;
-                terminal_print_string("SENT PACKET\n");
-            }
-        }
-        
-        /* Slow it down */
-        for(volatile int d = 0; d < 5000000; d++); 
-    }
+    /* Launch the interactive shell on the main kernel task */
+    shell_main();
 }

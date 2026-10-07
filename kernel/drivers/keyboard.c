@@ -63,3 +63,24 @@ char keyboard_scancode_to_ascii(uint8_t scancode) {
 
     return kbd_us[scancode];
 }
+
+#define KBD_BUFFER_SIZE 256
+static char kbd_buffer[KBD_BUFFER_SIZE];
+static volatile int kbd_head = 0;
+static volatile int kbd_tail = 0;
+
+void keyboard_push_char(char c) {
+    if (c == 0) return;
+    int next_head = (kbd_head + 1) % KBD_BUFFER_SIZE;
+    if (next_head != kbd_tail) {
+        kbd_buffer[kbd_head] = c;
+        kbd_head = next_head;
+    }
+}
+
+char keyboard_pop_char(void) {
+    if (kbd_head == kbd_tail) return 0; // Buffer empty
+    char c = kbd_buffer[kbd_tail];
+    kbd_tail = (kbd_tail + 1) % KBD_BUFFER_SIZE;
+    return c;
+}

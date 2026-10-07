@@ -8,5 +8,7 @@
  * Returns 0 if the scancode is not a printable character or is a key-release event.
  */
 char keyboard_scancode_to_ascii(uint8_t scancode);
+void keyboard_push_char(char c);
+char keyboard_pop_char(void);
 
 #endif
