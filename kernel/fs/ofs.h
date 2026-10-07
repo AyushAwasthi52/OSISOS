@@ -40,4 +40,7 @@ bool ofs_write_file(const char* filename, const char* data);
 /* Read a file's contents into a buffer */
 bool ofs_read_file(const char* filename, char* buffer);
 
+/* List all files in the filesystem */
+void ofs_list_files(void);
+
 #endif

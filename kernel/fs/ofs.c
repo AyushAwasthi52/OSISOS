@@ -143,3 +143,23 @@ bool ofs_read_file(const char* filename, char* buffer) {
     }
     return false; // File not found
 }
+
+extern void terminal_print_string(const char* str);
+extern void terminal_print_dec(uint32_t val);
+
+void ofs_list_files(void) {
+    int count = 0;
+    for (int i = 0; i < MAX_FILES; i++) {
+        if (inodes[i].filename[0] != '\0') {
+            terminal_print_string(" - ");
+            terminal_print_string(inodes[i].filename);
+            terminal_print_string(" (");
+            terminal_print_dec(inodes[i].size);
+            terminal_print_string(" bytes)\n");
+            count++;
+        }
+    }
+    if (count == 0) {
+        terminal_print_string("No files found.\n");
+    }
+}

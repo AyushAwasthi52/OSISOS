@@ -157,6 +157,31 @@ void user_program(void) {
     }
 }
 
+void send_ping_packet(void) {
+    if (!e1000_found) return;
+    
+    uint8_t* unaligned_eth = (uint8_t*) kmalloc(64 + 16);
+    uint8_t* eth_frame = (uint8_t*) (((uint32_t)unaligned_eth + 15) & ~15);
+    // Determine the exact MAC of the OTHER machine!
+    eth_frame[0] = 0x52;
+    eth_frame[1] = 0x54;
+    eth_frame[2] = 0x00;
+    eth_frame[3] = 0x12;
+    eth_frame[4] = 0x34;
+    // If I am .56, talk to .57. If I am .57, talk to .56!
+    eth_frame[5] = (e1000_mac[5] == 0x56) ? 0x57 : 0x56;
+    
+    for(int j=0; j<6; j++) eth_frame[6+j] = e1000_mac[j]; // Source
+    eth_frame[12] = 0x13; // Custom EtherType High
+    eth_frame[13] = 0x37; // Custom EtherType Low
+    
+    const char* msg = "PING!";
+    for(int j=0; j<6; j++) eth_frame[14+j] = msg[j]; // Payload
+    
+    e1000_send_packet(eth_frame, 64);
+    terminal_print_string("Packet sent!\n");
+}
+
 /* 
  * This is Task 2! 
  * It runs in kernel mode (Ring 0) and handles incoming network packets.
