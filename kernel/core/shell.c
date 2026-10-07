@@ -20,6 +20,7 @@ static int strcmp(const char* s1, const char* s2) {
 #include "../mm/pmm.h"
 #include "task.h"
 #include "editor.h"
+#include "io.h"
 
 extern void send_ping_packet(void);
 extern void terminal_print_dec(uint32_t val);
@@ -32,6 +33,12 @@ static void print_2digit(uint8_t val) {
     }
     terminal_print_dec(val);
 }
+
+// State variables for login
+static bool is_logged_in = false;
+static bool entering_password = false;
+static char username[32];
+static char password[32];
 
 static void execute_command(char* cmd) {
     if (cmd[0] == '\0') {
@@ -54,6 +61,9 @@ static void execute_command(char* cmd) {
         terminal_print_string("  edit <file>   - Open text editor\n");
         terminal_print_string("  mkdir <dir>   - Create a directory\n");
         terminal_print_string("  cd <dir>      - Change directory\n");
+        terminal_print_string("  logout        - Log out of the current session\n");
+        terminal_print_string("  reboot        - Reboot the system\n");
+        terminal_print_string("  shutdown      - Power off the system\n");
     } else if (cmd[0] == 'e' && cmd[1] == 'c' && cmd[2] == 'h' && cmd[3] == 'o' && cmd[4] == ' ') {
         terminal_print_string(&cmd[5]);
         terminal_putchar('\n');
@@ -129,18 +139,31 @@ static void execute_command(char* cmd) {
     } else if (strcmp(cmd, "ping") == 0) {
         terminal_print_string("Pinging network...\n");
         send_ping_packet();
+    } else if (strcmp(cmd, "logout") == 0) {
+        for (int i = 0; i < 25; i++) terminal_putchar('\n');
+        terminal_print_string("==================================\n");
+        terminal_print_string("      Welcome to OSISOS v1.0      \n");
+        terminal_print_string("==================================\n\n");
+        terminal_print_string("login: ");
+        is_logged_in = false;
+        entering_password = false;
+    } else if (strcmp(cmd, "reboot") == 0) {
+        terminal_print_string("Rebooting...\n");
+        uint8_t good = 0x02;
+        while (good & 0x02) good = inb(0x64);
+        outb(0x64, 0xFE);
+        __asm__ volatile ("cli; hlt");
+    } else if (strcmp(cmd, "shutdown") == 0) {
+        terminal_print_string("Shutting down...\n");
+        outw(0x604, 0x2000);
+        outw(0xB004, 0x2000);
+        __asm__ volatile ("cli; hlt");
     } else {
         terminal_print_string("Unknown command: ");
         terminal_print_string(cmd);
         terminal_putchar('\n');
     }
 }
-
-// State variables for login
-static bool is_logged_in = false;
-static bool entering_password = false;
-static char username[32];
-static char password[32];
 
 void shell_main(void) {
     char input_buffer[256];
@@ -181,7 +204,9 @@ void shell_main(void) {
                 } else {
                     terminal_putchar('\n');
                     execute_command(input_buffer);
-                    terminal_print_string("admin@osisos> ");
+                    if (is_logged_in) {
+                        terminal_print_string("admin@osisos> ");
+                    }
                 }
                 buf_idx = 0;
             } else if (c == '\b') {
