@@ -15,4 +15,7 @@ void* pmm_alloc_block(void);
 /* Give the 4KB chunk back to the OS */
 void pmm_free_block(void* physical_address);
 
+uint32_t pmm_get_total_memory(void);
+uint32_t pmm_get_free_memory(void);
+
 #endif

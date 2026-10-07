@@ -118,3 +118,22 @@ void task_yield(void) {
     
     __asm__ volatile("sti");
 }
+
+extern void terminal_print_string(const char* str);
+extern void terminal_print_dec(uint32_t val);
+extern void terminal_print_hex(uint32_t val);
+
+void task_list_all(void) {
+    __asm__ volatile("cli");
+    task_t* tmp = (task_t*)ready_queue;
+    terminal_print_string("PID\tSTACK\n");
+    terminal_print_string("---\t-----\n");
+    while (tmp != NULL) {
+        terminal_print_dec(tmp->pid);
+        terminal_print_string("\t");
+        terminal_print_hex(tmp->esp);
+        terminal_print_string("\n");
+        tmp = tmp->next;
+    }
+    __asm__ volatile("sti");
+}

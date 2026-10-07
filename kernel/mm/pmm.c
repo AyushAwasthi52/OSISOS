@@ -75,3 +75,17 @@ void pmm_free_block(void* physical_address) {
     uint32_t bit = addr / PMM_FRAME_SIZE;
     bitmap_clear(bit); /* Mark it as FREE again */
 }
+
+uint32_t pmm_get_total_memory(void) {
+    return max_frames * PMM_FRAME_SIZE;
+}
+
+uint32_t pmm_get_free_memory(void) {
+    uint32_t free_frames = 0;
+    for (uint32_t i = 1024; i < max_frames; i++) {
+        if (!bitmap_test(i)) {
+            free_frames++;
+        }
+    }
+    return free_frames * PMM_FRAME_SIZE;
+}

@@ -16,8 +16,21 @@ static int strcmp(const char* s1, const char* s2) {
 }
 
 #include "ofs.h"
+#include "rtc.h"
+#include "../mm/pmm.h"
+#include "task.h"
 
 extern void send_ping_packet(void);
+extern void terminal_print_dec(uint32_t val);
+extern uint32_t seconds_passed;
+
+// Helper to print a 2-digit zero-padded number
+static void print_2digit(uint8_t val) {
+    if (val < 10) {
+        terminal_putchar('0');
+    }
+    terminal_print_dec(val);
+}
 
 static void execute_command(char* cmd) {
     if (cmd[0] == '\0') {
@@ -33,6 +46,10 @@ static void execute_command(char* cmd) {
         terminal_print_string("  ls            - List files on disk\n");
         terminal_print_string("  cat <file>    - Read file contents\n");
         terminal_print_string("  ping          - Send a network packet\n");
+        terminal_print_string("  date          - Show current date and time\n");
+        terminal_print_string("  free          - Show memory statistics\n");
+        terminal_print_string("  ps            - List running processes\n");
+        terminal_print_string("  uptime        - Show system uptime\n");
     } else if (cmd[0] == 'e' && cmd[1] == 'c' && cmd[2] == 'h' && cmd[3] == 'o' && cmd[4] == ' ') {
         terminal_print_string(&cmd[5]);
         terminal_putchar('\n');
@@ -41,6 +58,38 @@ static void execute_command(char* cmd) {
         for (int i = 0; i < 25; i++) {
             terminal_putchar('\n');
         }
+    } else if (strcmp(cmd, "date") == 0) {
+        rtc_time_t t;
+        read_rtc(&t);
+        terminal_print_dec(t.year);
+        terminal_putchar('-');
+        print_2digit(t.month);
+        terminal_putchar('-');
+        print_2digit(t.day);
+        terminal_putchar(' ');
+        print_2digit(t.hour);
+        terminal_putchar(':');
+        print_2digit(t.minute);
+        terminal_putchar(':');
+        print_2digit(t.second);
+        terminal_print_string(" UTC\n");
+    } else if (strcmp(cmd, "free") == 0) {
+        uint32_t total = pmm_get_total_memory() / 1024;
+        uint32_t free = pmm_get_free_memory() / 1024;
+        uint32_t used = total - free;
+        terminal_print_string("Total Memory: ");
+        terminal_print_dec(total);
+        terminal_print_string(" KB\nUsed Memory:  ");
+        terminal_print_dec(used);
+        terminal_print_string(" KB\nFree Memory:  ");
+        terminal_print_dec(free);
+        terminal_print_string(" KB\n");
+    } else if (strcmp(cmd, "ps") == 0) {
+        task_list_all();
+    } else if (strcmp(cmd, "uptime") == 0) {
+        terminal_print_string("System Uptime: ");
+        terminal_print_dec(seconds_passed);
+        terminal_print_string(" seconds\n");
     } else if (strcmp(cmd, "ls") == 0) {
         ofs_list_files();
     } else if (cmd[0] == 'c' && cmd[1] == 'a' && cmd[2] == 't' && cmd[3] == ' ') {
@@ -64,33 +113,72 @@ static void execute_command(char* cmd) {
     }
 }
 
+// State variables for login
+static bool is_logged_in = false;
+static bool entering_password = false;
+static char username[32];
+static char password[32];
+
 void shell_main(void) {
     char input_buffer[256];
     int buf_idx = 0;
 
-    terminal_print_string("\nWelcome to OSISOS Shell!\n");
-    terminal_print_string("> ");
+    terminal_print_string("\n==================================\n");
+    terminal_print_string("      Welcome to OSISOS v1.0      \n");
+    terminal_print_string("==================================\n\n");
+    terminal_print_string("login: ");
 
     while (1) {
         char c = keyboard_pop_char();
         if (c != 0) {
             if (c == '\n') {
-                terminal_putchar('\n');
                 input_buffer[buf_idx] = '\0';
-                execute_command(input_buffer);
+                
+                if (!is_logged_in) {
+                    if (!entering_password) {
+                        // Store username
+                        for (int i = 0; i <= buf_idx; i++) username[i] = input_buffer[i];
+                        entering_password = true;
+                        terminal_print_string("\npassword: ");
+                    } else {
+                        // Store password and verify
+                        for (int i = 0; i <= buf_idx; i++) password[i] = input_buffer[i];
+                        terminal_putchar('\n');
+                        
+                        // Hardcoded login for now
+                        if (strcmp(username, "admin") == 0 && strcmp(password, "osisos") == 0) {
+                            is_logged_in = true;
+                            terminal_print_string("\nLogin successful. Type 'help' for commands.\n");
+                            terminal_print_string("admin@osisos> ");
+                        } else {
+                            terminal_print_string("\nLogin incorrect.\n\nlogin: ");
+                            entering_password = false;
+                        }
+                    }
+                } else {
+                    terminal_putchar('\n');
+                    execute_command(input_buffer);
+                    terminal_print_string("admin@osisos> ");
+                }
                 buf_idx = 0;
-                terminal_print_string("> ");
             } else if (c == '\b') {
                 if (buf_idx > 0) {
                     buf_idx--;
-                    terminal_putchar('\b');
+                    terminal_putchar('\b'); // Handle backspace visually
                 }
             } else {
                 if (buf_idx < 255) {
                     input_buffer[buf_idx++] = c;
-                    terminal_putchar(c);
+                    if (entering_password && !is_logged_in) {
+                        terminal_putchar('*'); // Mask password
+                    } else {
+                        terminal_putchar(c);
+                    }
                 }
             }
         }
+        
+        // Very slight delay
+        for (volatile int d = 0; d < 10000; d++);
     }
 }
