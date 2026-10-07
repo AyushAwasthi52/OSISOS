@@ -1,8 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/home/ayush/College/OSISOS/build/cmake_install.cmake",
-		"/home/ayush/College/OSISOS/build/tests/unit/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

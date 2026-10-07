@@ -1,7 +1,0 @@
-/home/ayush/College/OSISOS/build/CMakeFiles/osisos.dir
-/home/ayush/College/OSISOS/build/CMakeFiles/test.dir
-/home/ayush/College/OSISOS/build/CMakeFiles/edit_cache.dir
-/home/ayush/College/OSISOS/build/CMakeFiles/rebuild_cache.dir
-/home/ayush/College/OSISOS/build/tests/unit/CMakeFiles/test.dir
-/home/ayush/College/OSISOS/build/tests/unit/CMakeFiles/edit_cache.dir
-/home/ayush/College/OSISOS/build/tests/unit/CMakeFiles/rebuild_cache.dir
