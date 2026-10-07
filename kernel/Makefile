@@ -20,7 +20,7 @@ OBJS = arch/i386/boot.o \
        arch/i386/switch.o arch/i386/usermode.o \
        drivers/keyboard.o drivers/timer.o drivers/ide.o drivers/pci.o drivers/e1000.o drivers/rtc.o \
        mm/pmm.o mm/paging.o mm/kheap.o fs/ofs.o \
-       core/task.o core/kernel.o core/syscall.o core/shell.o
+       core/task.o core/kernel.o core/syscall.o core/shell.o core/editor.o
 
 all: osisos.bin
 
@@ -63,5 +63,5 @@ osisos.iso: osisos.bin
 
 # Clean up all compiled files
 clean:
-	rm -f $(OBJS) osisos.bin osisos.iso
+	rm -f $(OBJS) osisos.bin osisos.iso drive.img drive2.img
 	rm -rf isodir

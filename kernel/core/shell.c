@@ -19,6 +19,7 @@ static int strcmp(const char* s1, const char* s2) {
 #include "rtc.h"
 #include "../mm/pmm.h"
 #include "task.h"
+#include "editor.h"
 
 extern void send_ping_packet(void);
 extern void terminal_print_dec(uint32_t val);
@@ -50,9 +51,31 @@ static void execute_command(char* cmd) {
         terminal_print_string("  free          - Show memory statistics\n");
         terminal_print_string("  ps            - List running processes\n");
         terminal_print_string("  uptime        - Show system uptime\n");
+        terminal_print_string("  edit <file>   - Open text editor\n");
+        terminal_print_string("  mkdir <dir>   - Create a directory\n");
+        terminal_print_string("  cd <dir>      - Change directory\n");
     } else if (cmd[0] == 'e' && cmd[1] == 'c' && cmd[2] == 'h' && cmd[3] == 'o' && cmd[4] == ' ') {
         terminal_print_string(&cmd[5]);
         terminal_putchar('\n');
+    } else if (cmd[0] == 'm' && cmd[1] == 'k' && cmd[2] == 'd' && cmd[3] == 'i' && cmd[4] == 'r' && cmd[5] == ' ') {
+        char* dirname = &cmd[6];
+        if (ofs_mkdir(dirname)) {
+            terminal_print_string("Directory created.\n");
+        } else {
+            terminal_print_string("mkdir: cannot create directory '");
+            terminal_print_string(dirname);
+            terminal_print_string("': File exists or no space\n");
+        }
+    } else if (cmd[0] == 'c' && cmd[1] == 'd' && cmd[2] == ' ') {
+        char* dirname = &cmd[3];
+        if (!ofs_change_dir(dirname)) {
+            terminal_print_string("cd: ");
+            terminal_print_string(dirname);
+            terminal_print_string(": No such file or directory\n");
+        }
+    } else if (cmd[0] == 'e' && cmd[1] == 'd' && cmd[2] == 'i' && cmd[3] == 't' && cmd[4] == ' ') {
+        char* filename = &cmd[5];
+        editor_start(filename);
     } else if (strcmp(cmd, "clear") == 0) {
         // Scroll the terminal enough to clear it
         for (int i = 0; i < 25; i++) {
