@@ -17,6 +17,7 @@
 #include "ofs.h"
 #include "pci.h"
 #include "e1000.h"
+#include "net.h"
 
 /* VGA Text Mode constants */
 static const size_t VGA_WIDTH = 80;
@@ -178,7 +179,8 @@ void send_ping_packet(void) {
     const char* msg = "PING!";
     for(int j=0; j<6; j++) eth_frame[14+j] = msg[j]; // Payload
     
-    e1000_send_packet(eth_frame, 64);
+    e1000_send_packet(eth_frame, 64);      /* the driver copies the frame, so we can free it */
+    kfree(unaligned_eth);
     terminal_print_string("Packet sent!\n");
 }
 
@@ -189,24 +191,12 @@ void send_ping_packet(void) {
 void network_task(void) {
     while(1) {
         if (e1000_found) {
-            uint16_t rx_len;
-            uint8_t* rx_packet = (uint8_t*) e1000_receive_packet(&rx_len);
-            
-            if (rx_packet != NULL) {
-                // Check if it's our custom protocol
-                if (rx_len >= 14 && rx_packet[12] == 0x13 && rx_packet[13] == 0x37) {
-                    terminal_print_string("\n[Network] MSG: ");
-                    // Print payload (starts at byte 14)
-                    for (int p = 14; p < rx_len && rx_packet[p] != '\0'; p++) {
-                        terminal_putchar((char)rx_packet[p]);
-                    }
-                    terminal_print_string("\n> ");
-                }
-            }
+            net_poll();             /* drain RX ring, ARP/IP/ICMP/TCP, protocol timers */
+            net_services_poll();    /* built-in echo (7) and HTTP (80) servers          */
         }
-        
-        /* Yield to let shell run smoothly */
-        for(volatile int d = 0; d < 100000; d++); 
+
+        /* Small delay; the timer interrupt preempts us to the shell anyway */
+        for(volatile int d = 0; d < 20000; d++);
     }
 }
 
@@ -299,7 +289,16 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
                 terminal_putchar(hex[e1000_mac[i] & 0x0F]);
                 if (i < 5) terminal_putchar(':');
             }
-            terminal_print_string("\n\n");
+            terminal_print_string("\n");
+            net_init();
+            terminal_print_string("Network stack up: ");
+            terminal_print_dec(netif.ip >> 24); terminal_putchar('.');
+            terminal_print_dec((netif.ip >> 16) & 255); terminal_putchar('.');
+            terminal_print_dec((netif.ip >> 8) & 255); terminal_putchar('.');
+            terminal_print_dec(netif.ip & 255);
+            terminal_print_string(" (echo:7 http:80)\n\n");
+        } else {
+            terminal_print_string("WARNING: E1000 init failed (out of memory?)\n\n");
         }
     } else {
         terminal_print_string("WARNING: No E1000 Network Card found on PCI Bus!\n\n");

@@ -8,6 +8,10 @@ static uint32_t mmio_addr;
 struct e1000_tx_desc* tx_descs;
 struct e1000_rx_desc* rx_descs;
 uint16_t tx_tail = 0;
+static uint8_t* tx_bufs[E1000_NUM_TX_DESC];   /* driver-owned copy of each in-flight frame */
+
+#include <stddef.h>
+extern void* memcpy(void* dst, const void* src, size_t n);
 
 /* Read from E1000 MMIO Register */
 static uint32_t e1000_read_reg(uint16_t offset) {
@@ -45,7 +49,9 @@ static void init_tx(void) {
     
     // Initialize all descriptors
     for (int i = 0; i < E1000_NUM_TX_DESC; i++) {
-        tx_descs[i].addr = 0;
+        void* b = kmalloc(2048 + 16);
+        tx_bufs[i] = b ? (uint8_t*) (((uint32_t)b + 15) & ~15) : 0;
+        tx_descs[i].addr = (uint64_t)(uint32_t) tx_bufs[i];
         tx_descs[i].cmd = 0;
         tx_descs[i].status = 1; // Mark as done initially
     }
@@ -73,7 +79,7 @@ static void init_rx(void) {
     for (int i = 0; i < E1000_NUM_RX_DESC; i++) {
         // Allocate a 2KB buffer for each packet. Align it for safety!
         void* unaligned_buf = kmalloc(2048 + 16);
-        rx_descs[i].addr = (uint64_t)(uint32_t) (((uint32_t)unaligned_buf + 15) & ~15);
+        rx_descs[i].addr = unaligned_buf ? (uint64_t)(uint32_t) (((uint32_t)unaligned_buf + 15) & ~15) : 0;
         rx_descs[i].status = 0;
     }
     
@@ -107,42 +113,52 @@ bool init_e1000(uint32_t mmio_base) {
     
     init_tx();
     init_rx();
-    
+
+    /* kmalloc() returns NULL when the heap is exhausted: refuse to run DMA on address 0 */
+    if (!tx_descs || !rx_descs) return false;
+    for (int i = 0; i < E1000_NUM_TX_DESC; i++) if (!tx_bufs[i]) return false;
+    for (int i = 0; i < E1000_NUM_RX_DESC; i++) if (!rx_descs[i].addr) return false;
+
     return true;
 }
 
 static uint16_t rx_curr = 0;
 
 void* e1000_receive_packet(uint16_t* out_length) {
-    if (rx_descs[rx_curr].status & 0x01) {
-        // A packet is here!
-        *out_length = rx_descs[rx_curr].length;
-        void* packet_buffer = (void*)(uint32_t)rx_descs[rx_curr].addr;
-        
-        // Reset the descriptor so the hardware can use it again
-        rx_descs[rx_curr].status = 0;
-        
-        // Tell hardware we consumed it
-        e1000_write_reg(REG_RXDESCTAIL, rx_curr);
-        
-        // Advance
+    while (rx_descs[rx_curr].status & 0x01) {
+        uint16_t idx = rx_curr;
+        uint8_t status = rx_descs[idx].status;
+        uint8_t errors = rx_descs[idx].errors;
+        uint16_t len = rx_descs[idx].length;
+        void* packet_buffer = (void*)(uint32_t)rx_descs[idx].addr;
+
+        rx_descs[idx].status = 0;
+        e1000_write_reg(REG_RXDESCTAIL, idx);   /* hands back everything up to (not incl.) idx */
         rx_curr = (rx_curr + 1) % E1000_NUM_RX_DESC;
-        return packet_buffer;
+
+        /* Only whole, error-free frames. The buffer stays valid until the NEXT call,
+         * because descriptor idx is not given back to the hardware until then. */
+        if ((status & 0x02) && errors == 0) {
+            *out_length = len;
+            return packet_buffer;
+        }
     }
-    return NULL; // No packet available
+    return NULL;
 }
 
 void e1000_send_packet(void* packet, uint16_t length) {
-    tx_descs[tx_tail].addr = (uint64_t)(uint32_t)packet;
+    if (length > 2048) return;
+
+    /* Wait (bounded) until the hardware is done with this descriptor. */
+    for (uint32_t spin = 0; spin < 1000000 && !(tx_descs[tx_tail].status & 0x01); spin++);
+
+    /* Copy: the caller may reuse its buffer as soon as we return. */
+    memcpy(tx_bufs[tx_tail], packet, length);
+    tx_descs[tx_tail].addr = (uint64_t)(uint32_t) tx_bufs[tx_tail];
     tx_descs[tx_tail].length = length;
-    tx_descs[tx_tail].cmd = (1 << 0) | (1 << 1) | (1 << 3); 
-    tx_descs[tx_tail].status = 0; 
-    
-    uint16_t old_tail = tx_tail;
+    tx_descs[tx_tail].cmd = (1 << 0) | (1 << 1) | (1 << 3);   /* EOP | IFCS | RS */
+    tx_descs[tx_tail].status = 0;
+
     tx_tail = (tx_tail + 1) % E1000_NUM_TX_DESC;
-    
     e1000_write_reg(REG_TXDESCTAIL, tx_tail);
-    
-    // Do NOT wait for the hardware to finish sending (status & 1).
-    // In QEMU multicast mode, this can sometimes hang if the link is not ready!
 }

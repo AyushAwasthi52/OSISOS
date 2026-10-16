@@ -70,6 +70,19 @@ void* pmm_alloc_block(void) {
     return NULL; /* Out of Memory! */
 }
 
+void* pmm_alloc_contiguous(uint32_t count) {
+    uint32_t run = 0;
+    for (uint32_t bit = 0; bit < max_frames; bit++) {
+        run = bitmap_test(bit) ? 0 : run + 1;
+        if (run == count) {
+            uint32_t first = bit + 1 - count;
+            for (uint32_t i = first; i <= bit; i++) bitmap_set(i);
+            return (void*)(first * PMM_FRAME_SIZE);
+        }
+    }
+    return NULL;
+}
+
 void pmm_free_block(void* physical_address) {
     uint32_t addr = (uint32_t) physical_address;
     uint32_t bit = addr / PMM_FRAME_SIZE;

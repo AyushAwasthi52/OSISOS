@@ -15,6 +15,9 @@ void* pmm_alloc_block(void);
 /* Give the 4KB chunk back to the OS */
 void pmm_free_block(void* physical_address);
 
+/* Allocate `count` physically contiguous frames (NULL if no such run exists) */
+void* pmm_alloc_contiguous(uint32_t count);
+
 uint32_t pmm_get_total_memory(void);
 uint32_t pmm_get_free_memory(void);
 
