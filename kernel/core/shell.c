@@ -21,6 +21,7 @@ static int strcmp(const char* s1, const char* s2) {
 #include "task.h"
 #include "editor.h"
 #include "io.h"
+#include "net.h"
 
 extern void send_ping_packet(void);
 extern void terminal_print_dec(uint32_t val);
@@ -45,6 +46,11 @@ static void execute_command(char* cmd) {
         return;
     }
     
+    /* ifconfig, arp, ping <ip>, netstat, nc, http (see net/netcmd.c) */
+    if (net_shell_command(cmd)) {
+        return;
+    }
+
     if (strcmp(cmd, "help") == 0) {
         terminal_print_string("OSISOS Shell v1.0\n");
         terminal_print_string("Available commands:\n");
@@ -53,7 +59,14 @@ static void execute_command(char* cmd) {
         terminal_print_string("  echo <text>   - Print text to screen\n");
         terminal_print_string("  ls            - List files on disk\n");
         terminal_print_string("  cat <file>    - Read file contents\n");
-        terminal_print_string("  ping          - Send a network packet\n");
+        terminal_print_string("  ping          - Send a raw ethernet test packet\n");
+        terminal_print_string("  ping <ip>     - ICMP echo (4 requests)\n");
+        terminal_print_string("  ifconfig      - Show/set IP address (ifconfig <ip> <mask> <gw>)\n");
+        terminal_print_string("  arp           - Show ARP cache\n");
+        terminal_print_string("  netstat       - List TCP sockets\n");
+        terminal_print_string("  netdrop <pct> - Simulate packet loss (test TCP retransmit)\n");
+        terminal_print_string("  nc <ip> <port> [text]  - TCP client\n");
+        terminal_print_string("  http <ip> [port] [path] - HTTP GET\n");
         terminal_print_string("  date          - Show current date and time\n");
         terminal_print_string("  free          - Show memory statistics\n");
         terminal_print_string("  ps            - List running processes\n");
