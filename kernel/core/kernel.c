@@ -291,12 +291,7 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
             }
             terminal_print_string("\n");
             net_init();
-            terminal_print_string("Network stack up: ");
-            terminal_print_dec(netif.ip >> 24); terminal_putchar('.');
-            terminal_print_dec((netif.ip >> 16) & 255); terminal_putchar('.');
-            terminal_print_dec((netif.ip >> 8) & 255); terminal_putchar('.');
-            terminal_print_dec(netif.ip & 255);
-            terminal_print_string(" (echo:7 http:80)\n\n");
+            terminal_print_string("Network stack up (DHCP in progress; echo:7 http:80). Try: ifconfig\n\n");
         } else {
             terminal_print_string("WARNING: E1000 init failed (out of memory?)\n\n");
         }

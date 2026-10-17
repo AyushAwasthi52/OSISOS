@@ -13,7 +13,8 @@ import os, socket, subprocess, sys, threading, time, http.server, socketserver, 
 KERNEL = os.path.join(os.path.dirname(__file__), "..", "kernel", "osisos.bin")
 MON = "/tmp/osisos-mon.sock"
 HOST_HTTP_PORT = 18000
-FWD_HTTP, FWD_ECHO = 18080, 18007
+FWD_HTTP, FWD_ECHO, FWD_UDP = 18080, 18007, 18008
+NET = "192.168.76"; GW = NET + ".2"; GUEST = NET + ".50"   # DHCP pool differs from the 10.0.2.15 fallback on purpose
 KEYS = {' ': 'spc', '.': 'dot', '/': 'slash', '\n': 'ret', '-': 'minus', '\b': 'backspace'}
 
 class Qemu:
@@ -22,7 +23,7 @@ class Qemu:
         self.p = subprocess.Popen([
             "qemu-system-i386", "-m", "32M", "-kernel", KERNEL, "-display", "none",
             "-monitor", f"unix:{MON},server,nowait",
-            "-netdev", f"user,id=n0,hostfwd=tcp::{FWD_HTTP}-:80,hostfwd=tcp::{FWD_ECHO}-:7",
+            "-netdev", f"user,id=n0,net={NET}.0/24,dhcpstart={NET}.50,hostfwd=tcp::{FWD_HTTP}-:80,hostfwd=tcp::{FWD_ECHO}-:7,hostfwd=udp::{FWD_UDP}-:7",
             "-object", "filter-dump,id=f1,netdev=n0,file=/tmp/osisos.pcap",
             "-device", "e1000,netdev=n0,mac=52:54:00:12:34:56"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -79,33 +80,93 @@ def main():
         c, _ = nc_srv.accept(); c.settimeout(5); got.append(c.recv(100)); c.sendall(b"PONG-FROM-HOST\n"); c.close()
     threading.Thread(target=nc_thread, daemon=True).start()
 
+
+    # ---- fake DNS server on the host (guest -> GW:53 -> SLIRP -> 127.0.0.1:53) ----
+    dns_queries = []
+    def label(n): return b"".join(bytes([len(p)]) + p.encode() for p in n.split(".")) + b"\0"
+    def dns_thread():
+        ds = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); ds.bind(("127.0.0.1", 53)); ds.settimeout(0.5)
+        while not stop.is_set():
+            try: data, addr = ds.recvfrom(512)
+            except socket.timeout: continue
+            i = 12; name = []
+            while data[i]: name.append(data[i+1:i+1+data[i]].decode()); i += 1 + data[i]
+            name = ".".join(name); question = data[12:i+5]; dns_queries.append(name)
+            hdr = data[:2]
+            def a_rec(owner_ptr, ip): return owner_ptr + b"\0\1\0\1" + (60).to_bytes(4, "big") + b"\0\4" + bytes(map(int, ip.split(".")))
+            if name == "osisos.test":
+                resp = hdr + b"\x81\x80\0\1\0\1\0\0\0\0" + question + a_rec(b"\xc0\x0c", GW)         # compression pointer
+            elif name == "alias.test":
+                target = label("osisos.test")
+                cname = b"\xc0\x0c\0\5\0\1" + (60).to_bytes(4, "big") + len(target).to_bytes(2, "big") + target
+                resp = hdr + b"\x81\x80\0\1\0\2\0\0\0\0" + question + cname + a_rec(target, GW)   # CNAME then A
+            else:
+                resp = hdr + b"\x81\x83\0\1\0\0\0\0\0\0" + question                                  # NXDOMAIN
+            ds.sendto(resp, addr)
+    stop = threading.Event()
+    threading.Thread(target=dns_thread, daemon=True).start()
+
     q = Qemu()
     try:
         time.sleep(3)
         scr = q.screen()
-        check("boot + stack up message", "Network stack up: 10.0.2.15" in scr, scr)
+        check("boot + stack up message", "Network stack up" in scr, scr)
         q.type("admin\nosisos\n"); time.sleep(1.5)
 
         out = q.run("ifconfig", 1.5)
-        check("ifconfig shows IP", "inet 10.0.2.15" in out and "gw 10.0.2.2" in out, out)
+        check("DHCP: leased %s (not the 10.0.2.15 fallback)" % GUEST,
+              "inet " + GUEST in out and "gw " + GW in out and "dhcp BOUND" in out and "dns " + NET + ".3" in out, out)
 
-        out = q.run("ping 10.0.2.2", 8, until="seq=4")
+        out = q.run("ping " + GW, 8, until="seq=4")
         check("ICMP ping gateway (4/4 replies)", out.count("reply") >= 4, out)
 
         out = q.run("arp", 1.5)
-        check("ARP cache has gateway", "10.0.2.2" in out, out)
+        check("ARP cache has gateway", GW + "" in out, out)
 
-        out = q.run("http 10.0.2.2 %d /" % HOST_HTTP_PORT, 8, until="HELLO-FROM-HOST")
-        check("TCP client: connect + HTTP GET (small)", "connected to 10.0.2.2" in out and "HELLO-FROM-HOST" in out, out)
+        out = q.run("http %s %d /" % (GW, HOST_HTTP_PORT), 8, until="HELLO-FROM-HOST")
+        check("TCP client: connect + HTTP GET (small)", "connected to " + GW in out and "HELLO-FROM-HOST" in out, out)
 
-        out = q.run("nc 10.0.2.2 15555 ping", 8, until="PONG-FROM-HOST")
+        out = q.run("nc %s 15555 ping" % GW, 8, until="PONG-FROM-HOST")
         check("TCP client: nc send+receive", "PONG-FROM-HOST" in out and got and got[0] == b"ping\n", out + str(got))
 
-        out = q.run("http 10.0.2.2 %d /big" % HOST_HTTP_PORT, 12, until="truncated")
+        out = q.run("http %s %d /big" % (GW, HOST_HTTP_PORT), 12, until="truncated")
         check("TCP client: multi-segment download (flow control)", "output truncated" in out and "0123456789" in out, out)
 
-        out = q.run("nc 10.0.2.2 9 x", 8, until="refused")
+        out = q.run("nc %s 9 x" % GW, 8, until="refused")
         check("connection refused -> RST handled", "refused" in out, out)
+
+
+        # ---- DNS (point the guest at the host-side fake server via the gateway address) ----
+        q.run("dns " + GW, 1.5)
+        out = q.run("nslookup osisos.test", 8, until="resolving osisos.test ... " + GW)
+        check("DNS: A record with compression pointer", "osisos.test ... " + GW in out, out)
+        out = q.run("nslookup alias.test", 8, until="alias.test ... " + GW)
+        check("DNS: CNAME chain resolved", "alias.test ... " + GW in out, out)
+        out = q.run("nslookup nope.test", 8, until="no such host")
+        check("DNS: NXDOMAIN reported", "no such host" in out, out)
+        out = q.run("ping osisos.test", 8, until="seq=4")
+        check("ping by hostname", out.count("reply") >= 4, out)
+        out = q.run("http osisos.test %d /" % HOST_HTTP_PORT, 8, until="HELLO-FROM-HOST")
+        check("http by hostname", "HELLO-FROM-HOST" in out, out)
+        check("DNS cache: repeated lookups did not re-query the server",
+              dns_queries == ["osisos.test", "alias.test", "nope.test"], str(dns_queries))
+
+        # ---- DHCP renewal: a unicast REQUEST from our leased address to the server ----
+        q.run("dhcp renew", 4, until="BOUND")
+        time.sleep(1.5)
+        out = q.run("ifconfig", 2)
+        check("DHCP renew: still BOUND with the same address", "inet " + GUEST in out and "dhcp BOUND" in out, out)
+        dh = subprocess.run("tcpdump -nn -r /tmp/osisos.pcap 'udp port 67 or udp port 68' 2>/dev/null", shell=True, capture_output=True, text=True).stdout
+        reqs = dh.count("BOOTP/DHCP, Request"); reps = dh.count("BOOTP/DHCP, Reply")
+        check("DHCP on the wire: DISCOVER+REQUEST+renewal sent, OFFER+2xACK received; renewal is unicast",
+              reqs >= 3 and reps >= 3 and (GUEST + ".68 > " + GW + ".67") in dh, "requests=%d replies=%d\n%s" % (reqs, reps, dh[-900:]))
+
+        # ---- UDP server: echo a datagram through the hostfwd ----
+        us = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); us.settimeout(5)
+        us.sendto(b"udp-echo-test-\x00\xff" + b"x" * 600, ("127.0.0.1", FWD_UDP))
+        try: reply, _ = us.recvfrom(2000)
+        except Exception as e: reply = repr(e).encode()
+        check("UDP echo server (614-byte datagram)", reply == b"udp-echo-test-\x00\xff" + b"x" * 600, str(reply[:40]))
 
         # ---- server side: host connects into the guest through hostfwd ----
         time.sleep(0.5)
@@ -119,7 +180,7 @@ def main():
             c = socket.create_connection(("127.0.0.1", FWD_ECHO), timeout=8)
             payload = bytes(range(33, 127)) * 20            # ~1.9 KB, several segments
             c.sendall(payload); c.settimeout(8); buf = b""
-            while len(buf) < len(payload):
+            while len(buf) < len(payload): 
                 d = c.recv(4096)
                 if not d: break
                 buf += d

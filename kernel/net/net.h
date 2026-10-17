@@ -37,6 +37,7 @@
 
 #define IP_PROTO_ICMP   1
 #define IP_PROTO_TCP    6
+#define IP_PROTO_UDP    17
 
 #define IP4(a,b,c,d) (((uint32_t)(a) << 24) | ((uint32_t)(b) << 16) | \
                       ((uint32_t)(c) << 8)  |  (uint32_t)(d))
@@ -129,6 +130,7 @@ typedef struct {
     uint32_t ip;         /* host order, 0 = unconfigured */
     uint32_t mask;
     uint32_t gateway;    /* 0 = none (on-link only)      */
+    uint32_t dns;        /* DNS server, 0 = none         */
 } netif_t;
 
 typedef struct {
@@ -136,6 +138,7 @@ typedef struct {
     uint32_t arp_rx, arp_tx;
     uint32_t ip_rx, ip_dropped;
     uint32_t icmp_rx;
+    uint32_t udp_rx, udp_tx;
     uint32_t tcp_rx, tcp_tx, tcp_badsum, tcp_retx, tcp_rst;
     uint32_t tcp_syn_drop;         /* SYNs dropped (backlog full / no free socket) */
     uint32_t tcp_retx_state[11];   /* RTO expirations per tcp_state_t (debugging)   */
