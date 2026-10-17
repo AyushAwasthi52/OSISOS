@@ -1,18 +1,41 @@
 #include "ide.h"
 #include "io.h"
 
-/* Wait for the drive to be ready */
-static void ide_wait_ready(void) {
-    while ((inb(ATA_PRIMARY_STATUS) & 0xC0) != 0x40) {
-        // Wait until BSY (bit 7) is clear and RDY (bit 6) is set
-    }
+/*
+ * The ATA registers are one shared resource and every transfer is a multi-step
+ * sequence (select, LBA, command, wait, data). The PIT preempts tasks, so without
+ * protection the shell task and the network task (HTTP server reading files) could
+ * interleave two sequences and corrupt both. Each sector transfer therefore runs with
+ * interrupts disabled (uniprocessor mutual exclusion), and the waits are bounded so a
+ * dead drive cannot freeze the machine while interrupts are off.
+ */
+#define IDE_SPIN_LIMIT 4000000u
+
+static inline uint32_t ide_lock(void) {
+    uint32_t flags;
+    __asm__ volatile ("pushf; pop %0; cli" : "=r"(flags) : : "memory");
+    return flags;
+}
+static inline void ide_unlock(uint32_t flags) {
+    if (flags & 0x200) __asm__ volatile ("sti" : : : "memory");
 }
 
-/* Wait for the drive to have data ready to transfer */
-static void ide_wait_drq(void) {
-    while (!(inb(ATA_PRIMARY_STATUS) & 0x08)) {
-        // Wait until DRQ (bit 3) is set
+/* Wait for the drive to be ready (BSY clear, RDY set). Returns false on timeout. */
+static bool ide_wait_ready(void) {
+    for (uint32_t i = 0; i < IDE_SPIN_LIMIT; i++) {
+        if ((inb(ATA_PRIMARY_STATUS) & 0xC0) == 0x40) return true;
     }
+    return false;
+}
+
+/* Wait for DRQ (data ready). Returns false on timeout or drive error. */
+static bool ide_wait_drq(void) {
+    for (uint32_t i = 0; i < IDE_SPIN_LIMIT; i++) {
+        uint8_t st = inb(ATA_PRIMARY_STATUS);
+        if (st & 0x01) return false;          /* ERR */
+        if (st & 0x08) return true;           /* DRQ */
+    }
+    return false;
 }
 
 bool init_ide(void) {
@@ -58,7 +81,8 @@ bool init_ide(void) {
 }
 
 void ide_read_sector(uint32_t lba, uint8_t* buffer) {
-    ide_wait_ready();
+    uint32_t irq = ide_lock();
+    if (!ide_wait_ready()) goto fail;
     
     // Select drive and send Highest 4 bits of LBA, plus LBA mode bit (0x40)
     outb(ATA_PRIMARY_DRV_HEAD, 0xE0 | ((lba >> 24) & 0x0F));
@@ -75,14 +99,21 @@ void ide_read_sector(uint32_t lba, uint8_t* buffer) {
     outb(ATA_PRIMARY_COMMAND, ATA_CMD_READ_PIO);
     
     // Wait for drive to signal data is ready
-    ide_wait_drq();
+    if (!ide_wait_drq()) goto fail;
     
     // Read 256 words (512 bytes) into the buffer
     insw(ATA_PRIMARY_DATA, buffer, 256);
+    ide_unlock(irq);
+    return;
+
+fail:                                          /* never hand back stale stack garbage */
+    for (int i = 0; i < 512; i++) buffer[i] = 0;
+    ide_unlock(irq);
 }
 
 void ide_write_sector(uint32_t lba, uint8_t* buffer) {
-    ide_wait_ready();
+    uint32_t irq = ide_lock();
+    if (!ide_wait_ready()) { ide_unlock(irq); return; }
     
     // Select drive and send Highest 4 bits of LBA, plus LBA mode bit (0x40)
     outb(ATA_PRIMARY_DRV_HEAD, 0xE0 | ((lba >> 24) & 0x0F));
@@ -99,7 +130,7 @@ void ide_write_sector(uint32_t lba, uint8_t* buffer) {
     outb(ATA_PRIMARY_COMMAND, ATA_CMD_WRITE_PIO);
     
     // Wait for drive to signal it's ready to receive data
-    ide_wait_drq();
+    if (!ide_wait_drq()) { ide_unlock(irq); return; }
     
     // Write 256 words (512 bytes) from the buffer to the drive
     // We need outsw! Wait, we don't have outsw in io.h! 
@@ -112,4 +143,5 @@ void ide_write_sector(uint32_t lba, uint8_t* buffer) {
     // Send Cache Flush command just to be safe
     outb(ATA_PRIMARY_COMMAND, ATA_CMD_CACHE_FLUSH);
     ide_wait_ready();
+    ide_unlock(irq);
 }
