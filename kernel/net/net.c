@@ -10,6 +10,8 @@
  */
 #include "net.h"
 #include "tcp.h"
+#include "udp.h"
+#include "dhcp.h"
 #include "e1000.h"
 #include "pci.h"
 
@@ -242,7 +244,9 @@ static uint16_t ip_id_counter = 1;
 static uint8_t  ip_buf[NET_MTU];
 
 bool net_ip_send(uint32_t dst, uint8_t proto, const void* payload, uint16_t len) {
-    if (netif.ip == 0 || len + sizeof(ip_hdr_t) > NET_MTU) return false;
+    if (len + sizeof(ip_hdr_t) > NET_MTU) return false;
+    /* Before we have an address only broadcasts (DHCP DISCOVER/REQUEST) may be sent. */
+    if (netif.ip == 0 && dst != 0xFFFFFFFF) return false;
 
     uint16_t total = (uint16_t)(sizeof(ip_hdr_t) + len);
     ip_hdr_t* h = (ip_hdr_t*)ip_buf;
@@ -372,6 +376,7 @@ static void ip_input(const uint8_t* pkt, uint16_t len) {
     switch (h->proto) {
         case IP_PROTO_ICMP: icmp_input(src, payload, plen); break;
         case IP_PROTO_TCP:  if (unicast) tcp_input(src, payload, plen); break;
+        case IP_PROTO_UDP:  udp_input(src, dst, payload, plen); break;
         default: break;                         /* UDP etc.: not implemented yet */
     }
 }
@@ -443,15 +448,13 @@ void net_init(void) {
     memset(arp_pending, 0, sizeof(arp_pending));
     memcpy(netif.mac, e1000_mac, 6);
 
-    /* Defaults match QEMU's user-mode network (-netdev user): guest 10.0.2.15,
-     * gateway 10.0.2.2. The second OSISOS instance (MAC ...:57) gets .16 so two
-     * instances joined with -netdev socket can talk to each other.
-     * Change at runtime with:  ifconfig <ip> <mask> <gateway> */
-    uint32_t ip = (netif.mac[5] == 0x57) ? IP4(10, 0, 2, 16) : IP4(10, 0, 2, 15);
-    net_set_ip(ip, IP4(255, 255, 255, 0), IP4(10, 0, 2, 2));
-
+    /* The address comes from DHCP (see dhcp.c). If no server answers within ~15 s a
+     * static fallback (10.0.2.15, QEMU's user network) is installed. Override at any
+     * time with:  ifconfig <ip> <mask> <gateway>   |   dhcp renew */
+    udp_init();
     tcp_init();
     net_services_init();
+    dhcp_init();
 }
 
 /* ------------------------------------------------------------------ */

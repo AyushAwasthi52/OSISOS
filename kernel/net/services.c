@@ -10,6 +10,8 @@
  */
 #include "net.h"
 #include "tcp.h"
+#include "udp.h"
+#include "dhcp.h"
 
 extern uint32_t seconds_passed;           /* drivers/timer.c */
 
@@ -30,12 +32,15 @@ static int        http_listener = -1;
 static svc_conn_t echo_conns[SVC_MAX_CONN];
 static svc_conn_t http_conns[SVC_MAX_CONN];
 static uint32_t   http_served;
+static int        udp_echo_sock = -1;
 
 void net_services_init(void) {
     for (int i = 0; i < SVC_MAX_CONN; i++) { echo_conns[i].sock = -1; http_conns[i].sock = -1; }
 
     echo_listener = tcp_socket();
     if (echo_listener >= 0 && tcp_listen(echo_listener, SVC_ECHO_PORT) != TCP_OK) echo_listener = -1;
+    udp_echo_sock = udp_socket();                         /* UDP echo on port 7 */
+    if (udp_echo_sock >= 0 && udp_bind(udp_echo_sock, SVC_ECHO_PORT) != 0) udp_echo_sock = -1;
     http_listener = tcp_socket();
     if (http_listener >= 0 && tcp_listen(http_listener, SVC_HTTP_PORT) != TCP_OK) http_listener = -1;
 }
@@ -141,7 +146,20 @@ static void http_serve(svc_conn_t* c) {
     if ((uint32_t)(net_now() - c->last_active) > SVC_IDLE_TICKS) conn_done(c);
 }
 
+static void udp_echo_poll(void) {
+    if (udp_echo_sock < 0) return;
+    for (int i = 0; i < 8; i++) {                         /* bounded work per poll */
+        uint8_t buf[UDP_MAX_PAYLOAD];
+        uint32_t ip; uint16_t port;
+        int n = udp_recvfrom(udp_echo_sock, buf, sizeof(buf), &ip, &port, 0);
+        if (n < 0) return;
+        udp_sendto(udp_echo_sock, ip, port, buf, n);
+    }
+}
+
 void net_services_poll(void) {
+    dhcp_poll();                                          /* lease acquisition / renewal */
+    udp_echo_poll();
     accept_into(echo_listener, echo_conns);
     accept_into(http_listener, http_conns);
     for (int i = 0; i < SVC_MAX_CONN; i++) {
