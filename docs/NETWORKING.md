@@ -4,9 +4,11 @@ A from-scratch IPv4 + TCP stack for the OSISOS kernel, sitting on top of the
 existing e1000 driver. Everything lives in `kernel/net/`.
 
 ```
- shell commands   ifconfig arp ping netstat netdrop nc http          net/netcmd.c
- built-in servers echo (port 7)   HTTP (port 80)                     net/services.c
+ shell commands   ifconfig arp ping nslookup dns dhcp netstat nc http  net/netcmd.c
+ built-in servers echo (TCP+UDP port 7)   HTTP (port 80)             net/services.c
+ DHCP / DNS       lease acquisition+renewal; A-record resolver+cache net/dhcp.c  dns.c
  TCP              state machine, retransmit, flow control, sockets   net/tcp.c  tcp.h
+ UDP              datagram sockets with receive queues               net/udp.c  udp.h
  IPv4 + ICMP      routing, checksums, echo                           net/net.c
  ARP              cache, pending-packet queue                        net/net.c
  Ethernet         dst-MAC filtering                                  net/net.c
@@ -22,12 +24,15 @@ make run-direct        # boots osisos.bin straight in QEMU (no GRUB needed)
 ```
 
 QEMU's user-mode network gives the guest `10.0.2.15`, gateway/host `10.0.2.2`.
-Log in (`admin` / `osisos`), then:
+The address now comes from **DHCP** (QEMU's built-in server hands out 10.0.2.15,
+gateway/host `10.0.2.2`, DNS `10.0.2.3`). Log in (`admin` / `osisos`), then:
 
 | Command | What it does |
 |---|---|
 | `ifconfig` | MAC, IP, counters. `ifconfig <ip> <mask> <gw>` to change. |
-| `ping 10.0.2.2` | ICMP echo x4 (exercises ARP + IPv4 + ICMP). |
+| `ping 10.0.2.2` | ICMP echo x4. Accepts a hostname too: `ping example.com`. |
+| `nslookup <name>` | Resolve through DNS. `dns` shows the server, `dns <ip>` changes it. |
+| `dhcp` / `dhcp renew` | Show DHCP state and lease / renew the lease now. |
 | `arp` | ARP cache. |
 | `http 10.0.2.2 8000 /` | TCP client: HTTP GET to a server on your host. |
 | `nc 10.0.2.2 5555 hello` | TCP client: connect, send `hello\n`, print the reply. |
@@ -72,6 +77,32 @@ Timeouts are in ticks (100/s). `TCP_NOWAIT` never blocks, `TCP_FOREVER` waits
 indefinitely. Errors are negative: `TCP_ERR, TCP_AGAIN, TCP_TIMEOUT, TCP_RESET,
 TCP_REFUSED`.
 
+## UDP, DHCP and DNS
+
+```c
+#include "udp.h"
+int s = udp_socket();
+udp_bind(s, 5000);                                         /* optional: sendto auto-binds */
+udp_sendto(s, IP4(10,0,2,2), 5000, "hi", 2);
+n = udp_recvfrom(s, buf, sizeof buf, &src_ip, &src_port, 3 * NET_HZ);
+
+#include "dns.h"
+uint32_t ip;
+if (dns_resolve("example.com", &ip, 6 * NET_HZ) == DNS_OK) tcp_connect(s, ip, 80, ...);
+```
+
+**DHCP** (`dhcp.c`) runs as a non-blocking state machine inside the network task:
+`INIT -> SELECTING -> REQUESTING -> BOUND -> RENEWING`. It broadcasts DISCOVER/REQUEST
+from 0.0.0.0 with the BROADCAST flag (we cannot receive unicast to an address we do not own
+yet), renews by unicast at T1 (50% of the lease), falls back to broadcast at T2 (87.5%), and drops the
+address if the lease expires. If no server answers after 4 attempts (~15 s) it installs a static
+fallback (`10.0.2.15`, DNS `10.0.2.3`) and retries in the background every minute.
+`ifconfig <ip> <mask> <gw>` switches DHCP off (state `STATIC`); `dhcp renew` turns it back on.
+
+**DNS** (`dns.c`) is a blocking stub resolver: one recursive A query to `netif.dns`, 3 tries, TTL cache
+(max 5 min, 8 entries), compression-pointer parsing with bounds checks, and it ignores replies with the
+wrong transaction id or source. Never call it from the network task (it waits for that task to deliver the reply).
+
 ## Design notes (things worth knowing)
 
 **Concurrency.** The PIT preempts tasks at 100 Hz, so the shell task and the
@@ -115,11 +146,13 @@ window.
 - **Out-of-order segments are dropped** (sender retransmits). Add a reassembly queue / SACK.
 - **No congestion control** (slow start, fast retransmit/recovery). Fine on a LAN; wrong on the internet.
 - **Fixed RTO**; add RTT estimation (RFC 6298).
-- **No UDP, DHCP or DNS.** UDP is ~100 lines on top of `net_ip_send`; DHCP + DNS then give you
-  `ping example.com` and real browsing. Static IP for now.
+- **UDP**: no ICMP port-unreachable for closed ports (datagrams are silently dropped), no IP-level
+  fragmentation of large datagrams.
+- **DHCP**: no ARP-conflict probe before using a lease, no DECLINE/RELEASE, no INIT-REBOOT.
+  **DNS**: A records only (no AAAA), no TCP fallback for truncated answers, no search domains.
 - **IP fragmentation is not supported** (fragments are dropped; we always set DF).
 - **e1000 interrupts** instead of polling would cut latency (RX is currently serviced once per
   scheduler slice) and CPU use.
 - Delayed ACKs, Nagle, window scaling, keepalives, `shutdown()` half-close.
-- Two-instance mode (`make run` / `run2`, `-netdev socket`) assigns `10.0.2.15` / `10.0.2.16`
-  by MAC; the single-instance QEMU path above is what the test-suite covers.
+- Two-instance mode (`make run` / `run2`, `-netdev socket`) has no DHCP server, so each instance falls
+  back to `10.0.2.15` / `10.0.2.16` (by MAC) after ~15 s. Untested; the single-instance QEMU path is what the suite covers.

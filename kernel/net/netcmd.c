@@ -1,18 +1,23 @@
 /*
  * netcmd.c - shell commands for the network stack.
  *
- *   ifconfig                       show interface + counters
+ *   ifconfig                       show interface, DHCP state + counters
  *   ifconfig <ip> <mask> <gw>      configure (e.g. ifconfig 10.0.2.15 255.255.255.0 10.0.2.2)
  *   arp                            show ARP cache
- *   ping <ip>                      4 ICMP echo requests
+ *   ping <host>                    4 ICMP echo requests   (<host> = IP address or DNS name)
+ *   nslookup <name>                resolve a name through DNS
+ *   dns [<ip>]                     show / set the DNS server
+ *   dhcp [renew]                   show DHCP state / renew the lease now
  *   netstat                        list TCP sockets
- *   nc <ip> <port> [text...]       TCP client: connect, send "text\n", print the reply
- *   http <ip> [port] [path]        minimal HTTP/1.0 GET
+ *   nc <host> <port> [text...]     TCP client: connect, send "text\n", print the reply
+ *   http <host> [port] [path]      minimal HTTP/1.0 GET
  *
  * (The keyboard driver has no Shift key yet, so everything is lowercase.)
  */
 #include "net.h"
 #include "tcp.h"
+#include "dns.h"
+#include "dhcp.h"
 
 extern void terminal_print_string(const char* str);
 extern void terminal_putchar(char c);
@@ -71,6 +76,21 @@ static bool parse_uint(const char* s, uint32_t* out) {
     return true;
 }
 
+/* Accept a dotted IP or resolve a hostname via DNS (prints progress). */
+static bool resolve_host(const char* s, uint32_t* ip) {
+    if (net_parse_ip(s, ip)) return true;
+    p_str("resolving "); p_str(s); p_str(" ... ");
+    int r = dns_resolve(s, ip, 6 * NET_HZ);
+    if (r == DNS_OK) { p_ip(*ip); p_str("\n"); return true; }
+    switch (r) {
+        case DNS_NXDOMAIN: p_str("no such host\n"); break;
+        case DNS_TIMEOUT:  p_str("DNS timeout (server: "); p_ip(netif.dns); p_str(")\n"); break;
+        case DNS_ERR:      p_str("failed (no DNS server? bad name? try: dns <ip>)\n"); break;
+        default:           p_str("DNS failure\n"); break;
+    }
+    return false;
+}
+
 static const char* tcp_err_str(int e) {
     switch (e) {
         case TCP_TIMEOUT: return "timed out";
@@ -86,6 +106,7 @@ static void cmd_ifconfig(int argc, char** argv) {
     if (argc == 4) {
         uint32_t ip, mask, gw;
         if (net_parse_ip(argv[1], &ip) && net_parse_ip(argv[2], &mask) && net_parse_ip(argv[3], &gw)) {
+            dhcp_set_static();                       /* manual config wins over DHCP */
             net_set_ip(ip, mask, gw);
         } else {
             p_str("usage: ifconfig <ip> <netmask> <gateway>\n");
@@ -99,6 +120,10 @@ static void cmd_ifconfig(int argc, char** argv) {
     p_str("      inet "); p_ip(netif.ip);
     p_str("  mask "); p_ip(netif.mask);
     p_str("  gw ");   p_ip(netif.gateway); p_str("\n");
+    p_str("      dns "); p_ip(netif.dns);
+    p_str("  dhcp "); p_str(dhcp_state_name());
+    if (dhcp_lease_left_secs()) { p_str(" (lease "); p_dec(dhcp_lease_left_secs()); p_str(" s left, server "); p_ip(dhcp_server()); p_str(")"); }
+    p_str("\n");
     p_str("      frames rx "); p_dec(net_stats.rx_frames);
     p_str(" tx "); p_dec(net_stats.tx_frames);
     p_str("  tcp rx "); p_dec(net_stats.tcp_rx);
@@ -126,7 +151,7 @@ static void cmd_arp(void) {
 
 static void cmd_ping(const char* arg) {
     uint32_t ip;
-    if (!net_parse_ip(arg, &ip)) { p_str("ping: bad address\n"); return; }
+    if (!resolve_host(arg, &ip)) return;
     p_str("PING "); p_ip(ip); p_str("\n");
     for (uint16_t seq = 1; seq <= 4; seq++) {
         uint32_t t0 = net_now();
@@ -178,10 +203,8 @@ static void dump_reply(int s, uint32_t idle_ticks) {
 
 static void cmd_client(const char* ip_s, const char* port_s, const char* request, int req_len, bool http) {
     uint32_t ip, port;
-    if (!net_parse_ip(ip_s, &ip) || !parse_uint(port_s, &port) || port == 0 || port > 65535) {
-        p_str("bad address or port\n");
-        return;
-    }
+    if (!parse_uint(port_s, &port) || port == 0 || port > 65535) { p_str("bad port\n"); return; }
+    if (!resolve_host(ip_s, &ip)) return;
     int s = tcp_socket();
     if (s < 0) { p_str("no free sockets\n"); return; }
 
@@ -213,6 +236,27 @@ bool net_shell_command(const char* line) {
 
     if (net_strcmp(argv[0], "ifconfig") == 0) { cmd_ifconfig(argc, argv); return true; }
     if (net_strcmp(argv[0], "arp") == 0)      { cmd_arp();                return true; }
+    if (net_strcmp(argv[0], "nslookup") == 0) {
+        uint32_t ip, lit;
+        if (argc != 2) p_str("usage: nslookup <name>\n");
+        else if (resolve_host(argv[1], &ip) && net_parse_ip(argv[1], &lit)) { p_ip(ip); p_str("\n"); }
+        return true;                               /* (names already printed their answer) */
+    }
+    if (net_strcmp(argv[0], "dns") == 0) {
+        uint32_t ip;
+        if (argc == 2 && net_parse_ip(argv[1], &ip)) netif.dns = ip;
+        else if (argc != 1) { p_str("usage: dns [<server-ip>]\n"); return true; }
+        p_str("DNS server: "); p_ip(netif.dns); p_str("\n");
+        return true;
+    }
+    if (net_strcmp(argv[0], "dhcp") == 0) {
+        if (argc == 2 && net_strcmp(argv[1], "renew") == 0) { dhcp_renew_now(); p_str("renewing...\n"); return true; }
+        p_str("DHCP: "); p_str(dhcp_state_name());
+        if (dhcp_server()) { p_str("  server "); p_ip(dhcp_server()); }
+        if (dhcp_lease_left_secs()) { p_str("  lease left "); p_dec(dhcp_lease_left_secs()); p_str(" s"); }
+        p_str("\n");
+        return true;
+    }
     if (net_strcmp(argv[0], "netdrop") == 0) {
         uint32_t pct;
         if (argc == 2 && parse_uint(argv[1], &pct) && pct <= 90) {

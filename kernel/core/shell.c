@@ -60,13 +60,15 @@ static void execute_command(char* cmd) {
         terminal_print_string("  ls            - List files on disk\n");
         terminal_print_string("  cat <file>    - Read file contents\n");
         terminal_print_string("  ping          - Send a raw ethernet test packet\n");
-        terminal_print_string("  ping <ip>     - ICMP echo (4 requests)\n");
+        terminal_print_string("  ping <host>   - ICMP echo (host = IP or DNS name)\n");
+        terminal_print_string("  nslookup <n>  - DNS lookup      dns [ip] - show/set DNS server\n");
+        terminal_print_string("  dhcp [renew]  - DHCP status / renew lease\n");
         terminal_print_string("  ifconfig      - Show/set IP address (ifconfig <ip> <mask> <gw>)\n");
         terminal_print_string("  arp           - Show ARP cache\n");
         terminal_print_string("  netstat       - List TCP sockets\n");
         terminal_print_string("  netdrop <pct> - Simulate packet loss (test TCP retransmit)\n");
-        terminal_print_string("  nc <ip> <port> [text]  - TCP client\n");
-        terminal_print_string("  http <ip> [port] [path] - HTTP GET\n");
+        terminal_print_string("  nc <host> <port> [text] - TCP client\n");
+        terminal_print_string("  http <host> [port] [path] - HTTP GET\n");
         terminal_print_string("  date          - Show current date and time\n");
         terminal_print_string("  free          - Show memory statistics\n");
         terminal_print_string("  ps            - List running processes\n");
