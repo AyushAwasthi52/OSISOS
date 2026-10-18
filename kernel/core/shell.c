@@ -41,11 +41,24 @@ static bool entering_password = false;
 static char username[32];
 static char password[32];
 
+extern bool fs_shell_command(const char* line);
+extern bool extras_command(const char* line);
+
 static void execute_command(char* cmd) {
     if (cmd[0] == '\0') {
         return;
     }
     
+    /* sysinfo, dmesg, fortune, snake, matrix, easter eggs (see core/extras.c) */
+    if (extras_command(cmd)) {
+        return;
+    }
+
+    /* rm, rmdir, mv, df (see fs/fscmd.c) */
+    if (fs_shell_command(cmd)) {
+        return;
+    }
+
     /* ifconfig, arp, ping <ip>, netstat, nc, http (see net/netcmd.c) */
     if (net_shell_command(cmd)) {
         return;
@@ -59,10 +72,15 @@ static void execute_command(char* cmd) {
         terminal_print_string("  echo <text>   - Print text to screen\n");
         terminal_print_string("  ls            - List files on disk\n");
         terminal_print_string("  cat <file>    - Read file contents\n");
+        terminal_print_string("  rm/rmdir/mv/df - delete, move files, disk usage\n");
+        terminal_print_string("  sysinfo, dmesg, selftest - system info, kernel log, self-check\n");
+        terminal_print_string("  fortune, cowsay, snake, matrix, sl - fun (there may be secrets)\n");
         terminal_print_string("  ping          - Send a raw ethernet test packet\n");
         terminal_print_string("  ping <host>   - ICMP echo (host = IP or DNS name)\n");
         terminal_print_string("  nslookup <n>  - DNS lookup      dns [ip] - show/set DNS server\n");
         terminal_print_string("  dhcp [renew]  - DHCP status / renew lease\n");
+        terminal_print_string("  fetch <host> <port> <url> <ofs-path> - download into OFS\n");
+        terminal_print_string("  httpd [root <dir>] - web server status/log (docroot /www)\n");
         terminal_print_string("  ifconfig      - Show/set IP address (ifconfig <ip> <mask> <gw>)\n");
         terminal_print_string("  arp           - Show ARP cache\n");
         terminal_print_string("  netstat       - List TCP sockets\n");

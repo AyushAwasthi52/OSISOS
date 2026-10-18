@@ -150,6 +150,10 @@ extern uint8_t      net_loss_pct;
 extern netif_t      netif;
 extern net_stats_t  net_stats;
 
+/* 127.x.x.x means "this host". We map it to our own address so the normal TCP/UDP/ICMP code
+ * works unchanged; packets addressed to ourselves are looped back inside net_ip_send(). */
+static inline uint32_t net_canon(uint32_t ip) { return ((ip >> 24) == 127 && netif.ip) ? netif.ip : ip; }
+
 /* ------------------------------------------------------------------ */
 /* Core API                                                            */
 /* ------------------------------------------------------------------ */

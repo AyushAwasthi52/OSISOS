@@ -98,6 +98,7 @@ int udp_bind(int s, uint16_t port) {
 }
 
 int udp_sendto(int s, uint32_t ip, uint16_t port, const void* buf, int len) {
+    ip = net_canon(ip);
     uint32_t f = net_lock();
     udp_sock_t* u = sk(s);
     if (!u || len < 0 || len > UDP_MAX_PAYLOAD) { net_unlock(f); return UDP_ERR; }

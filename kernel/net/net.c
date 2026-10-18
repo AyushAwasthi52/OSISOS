@@ -243,6 +243,24 @@ static void arp_input(const uint8_t* p, uint16_t len) {
 static uint16_t ip_id_counter = 1;
 static uint8_t  ip_buf[NET_MTU];
 
+/* Packets we send to ourselves (127.0.0.1 / our own address) are queued here and
+ * delivered by net_poll() as if they had just arrived from the wire. */
+#define LOOP_Q 8
+static struct { uint16_t len; uint8_t data[NET_MTU]; } loopq[LOOP_Q];
+static uint8_t lq_head, lq_count;
+static void ip_input(const uint8_t* pkt, uint16_t len);
+
+static void loop_drain(void) {
+    for (int i = 0; i < 32; i++) {
+        uint32_t f = net_lock();
+        if (!lq_count) { net_unlock(f); return; }
+        ip_input(loopq[lq_head].data, loopq[lq_head].len);     /* may enqueue replies: they use other slots */
+        lq_head = (uint8_t)((lq_head + 1) % LOOP_Q);
+        lq_count--;
+        net_unlock(f);
+    }
+}
+
 bool net_ip_send(uint32_t dst, uint8_t proto, const void* payload, uint16_t len) {
     if (len + sizeof(ip_hdr_t) > NET_MTU) return false;
     /* Before we have an address only broadcasts (DHCP DISCOVER/REQUEST) may be sent. */
@@ -262,6 +280,15 @@ bool net_ip_send(uint32_t dst, uint8_t proto, const void* payload, uint16_t len)
     put_ip(h->dst, dst);
     h->csum = net_csum_fold(net_csum_add(0, h, sizeof(ip_hdr_t)));
     memcpy(ip_buf + sizeof(ip_hdr_t), payload, len);
+
+    if (netif.ip != 0 && dst == netif.ip) {                    /* to ourselves: never touches the wire */
+        if (lq_count >= LOOP_Q) return false;
+        uint8_t slot = (uint8_t)((lq_head + lq_count) % LOOP_Q);
+        loopq[slot].len = total;
+        memcpy(loopq[slot].data, ip_buf, total);
+        lq_count++;
+        return true;
+    }
 
     /* Broadcasts go straight to the Ethernet broadcast address. */
     if (dst == 0xFFFFFFFF || dst == (netif.ip | ~netif.mask)) {
@@ -316,6 +343,7 @@ static void icmp_input(uint32_t src, const uint8_t* p, uint16_t len) {
 }
 
 int icmp_ping(uint32_t dst, uint16_t seq, uint32_t timeout_ticks) {
+    dst = net_canon(dst);
     uint8_t pkt[8 + 32];
     icmp_hdr_t* h = (icmp_hdr_t*)pkt;
     h->type = 8;
@@ -412,6 +440,7 @@ static void net_rx_frame(const uint8_t* f, uint16_t len) {
 }
 
 void net_poll(void) {
+    loop_drain();
     for (int i = 0; i < 64; i++) {
         uint32_t f = net_lock();
         uint16_t len = 0;
@@ -421,6 +450,7 @@ void net_poll(void) {
         net_unlock(f);
         if (!frame) break;
     }
+    loop_drain();
     uint32_t f = net_lock();
     arp_timer();
     tcp_timer();

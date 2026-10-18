@@ -11,6 +11,8 @@
  *   netstat                        list TCP sockets
  *   nc <host> <port> [text...]     TCP client: connect, send "text\n", print the reply
  *   http <host> [port] [path]      minimal HTTP/1.0 GET
+ *   fetch <host> <port> <url-path> <ofs-path>   download a file over HTTP into OFS
+ *   httpd [root <dir>]             HTTP server status, access log, document root
  *
  * (The keyboard driver has no Shift key yet, so everything is lowercase.)
  */
@@ -18,6 +20,10 @@
 #include "tcp.h"
 #include "dns.h"
 #include "dhcp.h"
+#include "httpd.h"
+#include "ofs.h"
+#include "kheap.h"
+#include "udp.h"
 
 extern void terminal_print_string(const char* str);
 extern void terminal_putchar(char c);
@@ -78,6 +84,7 @@ static bool parse_uint(const char* s, uint32_t* out) {
 
 /* Accept a dotted IP or resolve a hostname via DNS (prints progress). */
 static bool resolve_host(const char* s, uint32_t* ip) {
+    if (net_strcmp(s, "localhost") == 0) { *ip = IP4(127, 0, 0, 1); return true; }
     if (net_parse_ip(s, ip)) return true;
     p_str("resolving "); p_str(s); p_str(" ... ");
     int r = dns_resolve(s, ip, 6 * NET_HZ);
@@ -221,6 +228,260 @@ static void cmd_client(const char* ip_s, const char* port_s, const char* request
     tcp_close(s);
 }
 
+/* ---------------- fetch: HTTP download into the filesystem ----------- */
+
+#define FETCH_MAX (256 * 1024)
+
+static int ci_prefix(const char* s, const char* prefix) {     /* case-insensitive "starts with" */
+    while (*prefix) {
+        char a = *s, b = *prefix;
+        if (a >= 'A' && a <= 'Z') a = (char)(a + 32);
+        if (a != b) return 0;
+        s++; prefix++;
+    }
+    return 1;
+}
+
+static void cmd_fetch(const char* host, const char* port_s, const char* url, const char* dest) {
+    uint32_t ip, port;
+    if (!ofs_available()) { p_str("fetch: no disk / filesystem\n"); return; }
+    if (!parse_uint(port_s, &port) || port == 0 || port > 65535) { p_str("bad port\n"); return; }
+    if (url[0] != '/' || dest[0] != '/') { p_str("fetch: url-path and ofs-path must start with /\n"); return; }
+    if (!resolve_host(host, &ip)) return;
+
+    uint8_t* buf = (uint8_t*)kmalloc(FETCH_MAX);
+    if (!buf) { p_str("fetch: out of memory\n"); return; }
+
+    int s = tcp_socket();
+    if (s < 0) { p_str("no free sockets\n"); kfree(buf); return; }
+    int r = tcp_connect(s, ip, (uint16_t)port, 5 * NET_HZ);
+    if (r != TCP_OK) { p_str("connect: "); p_str(tcp_err_str(r)); p_str("\n"); tcp_close(s); kfree(buf); return; }
+
+    char req[192];
+    int n = 0;
+    const char* parts[3] = { "GET ", url, " HTTP/1.0\r\nHost: osisos\r\nConnection: close\r\n\r\n" };
+    for (int i = 0; i < 3; i++)
+        for (const char* p = parts[i]; *p && n < (int)sizeof(req) - 1; p++) req[n++] = *p;
+    tcp_send(s, req, n, 5 * NET_HZ);
+
+    uint32_t total = 0, t_start = net_now();
+    bool too_big = false;
+    for (;;) {
+        int got = tcp_recv(s, buf + total, (int)(FETCH_MAX - total), 5 * NET_HZ);
+        if (got == 0) break;                                   /* server closed: transfer complete */
+        if (got < 0) { p_str("fetch: "); p_str(tcp_err_str(got)); p_str("\n"); tcp_close(s); kfree(buf); return; }
+        total += (uint32_t)got;
+        if (total >= FETCH_MAX) { too_big = true; break; }
+    }
+    tcp_close(s);
+    uint32_t t_dl = net_now() - t_start;
+    if (too_big) { p_str("fetch: file larger than 256 KB\n"); kfree(buf); return; }
+
+    /* split headers / body */
+    uint32_t hdr_end = 0;
+    for (uint32_t i = 0; i + 3 < total; i++) {
+        if (buf[i] == '\r' && buf[i+1] == '\n' && buf[i+2] == '\r' && buf[i+3] == '\n') { hdr_end = i + 4; break; }
+    }
+    if (!hdr_end || total < 12 || !ci_prefix((const char*)buf, "http/1.") || buf[9] != '2' || buf[10] != '0' || buf[11] != '0') {
+        p_str("fetch: server did not answer 200 OK\n");
+        kfree(buf);
+        return;
+    }
+
+    uint32_t body_len = total - hdr_end;
+    for (uint32_t i = 0; i < hdr_end; i++) {                    /* honour Content-Length if present */
+        if ((i == 0 || buf[i-1] == '\n') && ci_prefix((const char*)buf + i, "content-length:")) {
+            uint32_t v = 0, j = i + 15;
+            while (buf[j] == ' ') j++;
+            while (buf[j] >= '0' && buf[j] <= '9') v = v * 10 + (uint32_t)(buf[j++] - '0');
+            if (v > body_len) { p_str("fetch: truncated download\n"); kfree(buf); return; }
+            body_len = v;
+            break;
+        }
+    }
+
+    uint32_t t_w = net_now();
+    if (ofs_put(dest, buf + hdr_end, body_len)) {
+        p_str("saved "); p_dec(body_len); p_str(" bytes to "); p_str(dest);
+        p_str("  (download "); p_dec(t_dl * 10); p_str(" ms, disk write "); p_dec((net_now() - t_w) * 10); p_str(" ms)\n");
+    } else {
+        p_str("fetch: cannot write "); p_str(dest); p_str(" (missing directory? disk or inode table full?)\n");
+    }
+    kfree(buf);
+}
+
+static void cmd_httpd(int argc, char** argv) {
+    if (argc == 3 && net_strcmp(argv[1], "root") == 0) {
+        if (argv[2][0] != '/') { p_str("httpd: root must be an absolute path like /www\n"); return; }
+        httpd_set_root(argv[2]);
+    } else if (argc != 1) { p_str("usage: httpd [root <dir>]\n"); return; }
+
+    httpd_stats_t st;
+    httpd_get_stats(&st);
+    p_str("httpd on port 80, document root "); p_str(httpd_root());
+    p_str(ofs_lookup(httpd_root()) < 0 ? "  (does not exist: serving the built-in page)\n" : "\n");
+    p_str("  requests "); p_dec(st.requests); p_str("  active "); p_dec(st.active);
+    p_str("  2xx "); p_dec(st.s2xx); p_str("  3xx "); p_dec(st.s3xx);
+    p_str("  4xx "); p_dec(st.s4xx); p_str("  5xx "); p_dec(st.s5xx);
+    p_str("  sent "); p_dec(st.bytes_sent); p_str(" B\n");
+    for (int i = 0; i < 8; i++) {
+        httpd_log_t e;
+        if (!httpd_get_log(i, &e)) break;
+        p_str("  "); p_ip(e.ip); p_str(" "); p_str(e.method); p_str(" "); p_str(e.path);
+        p_str(" -> "); p_dec(e.status); p_str(" ("); p_dec(e.bytes); p_str(" B)\n");
+    }
+}
+
+/* ---------------- selftest ------------------------------------------- */
+
+static int st_pass, st_total;
+
+static void st_report(const char* name, bool ok, const char* detail) {
+    st_total++;
+    if (ok) st_pass++;
+    p_str(ok ? "  [ OK ] " : "  [FAIL] ");
+    p_str(name);
+    if (detail && detail[0]) { p_str(" - "); p_str(detail); }
+    p_str("\n");
+}
+
+static void cmd_selftest(void) {
+    st_pass = st_total = 0;
+    p_str("OSISOS self-test\n");
+    st_report("network interface configured", netif.ip != 0, netif.ip ? "" : "no address yet (DHCP in progress?)");
+
+    if (netif.ip) {
+        /* ICMP through the loopback path */
+        st_report("ICMP echo to 127.0.0.1", icmp_ping(IP4(127, 0, 0, 1), 1, NET_HZ) >= 0, "");
+
+        /* UDP echo service via loopback */
+        {
+            int s = udp_socket(); bool ok = false;
+            char buf[32]; uint32_t ip; uint16_t port;
+            if (s >= 0 && udp_sendto(s, IP4(127, 0, 0, 1), 7, "selftest-udp", 12) == 12) {
+                int n = udp_recvfrom(s, buf, sizeof(buf), &ip, &port, NET_HZ);
+                ok = (n == 12 && memcmp(buf, "selftest-udp", 12) == 0);
+            }
+            if (s >= 0) udp_close(s);
+            st_report("UDP echo (127.0.0.1:7)", ok, "");
+        }
+
+        /* TCP echo, multi-segment, verified byte for byte */
+        {
+            const int N = 3000;
+            uint8_t* tx = (uint8_t*)kmalloc(2 * N);
+            bool ok = false;
+            int got = 0;
+            if (tx) {
+                uint8_t* rx = tx + N;
+                for (int i = 0; i < N; i++) tx[i] = (uint8_t)(i * 7 + 3);
+                int s = tcp_socket();
+                if (s >= 0) {
+                    if (tcp_connect(s, IP4(127, 0, 0, 1), 7, 3 * NET_HZ) == TCP_OK &&
+                        tcp_send(s, tx, N, 3 * NET_HZ) == N) {
+                        while (got < N) {
+                            int r = tcp_recv(s, rx + got, N - got, 3 * NET_HZ);
+                            if (r <= 0) break;
+                            got += r;
+                        }
+                        ok = (got == N && memcmp(tx, rx, N) == 0);
+                    }
+                    tcp_close(s);
+                }
+                kfree(tx);
+            }
+            char d[24]; int k = 0; d[0] = '\0';
+            if (!ok) { const char* m = "echoed "; while (*m) d[k++] = *m++; int v = got; char t[8]; int tn = 0; if (!v) t[tn++] = '0'; while (v) { t[tn++] = (char)('0' + v % 10); v /= 10; } while (tn) d[k++] = t[--tn]; d[k] = '\0'; }
+            st_report("TCP echo, 3000 bytes (127.0.0.1:7)", ok, d);
+        }
+
+        /* HTTP server answers */
+        {
+            bool ok = false;
+            int s = tcp_socket();
+            if (s >= 0) {
+                if (tcp_connect(s, IP4(127, 0, 0, 1), 80, 3 * NET_HZ) == TCP_OK) {
+                    const char* rq = "GET /_status HTTP/1.0\r\n\r\n";
+                    tcp_send(s, rq, (int)net_strlen(rq), 3 * NET_HZ);
+                    char b[16];
+                    int r = tcp_recv(s, b, 12, 3 * NET_HZ);
+                    ok = (r >= 12 && memcmp(b, "HTTP/1.1 200", 12) == 0);
+                }
+                tcp_close(s);
+            }
+            st_report("HTTP server (GET /_status)", ok, "");
+        }
+
+        /* the outside world (informational: an isolated network is not a bug) */
+        if (netif.gateway) {
+            p_str(icmp_ping(netif.gateway, 2, 2 * NET_HZ) >= 0 ? "  [ -- ] gateway reachable\n" : "  [WARN] gateway did not answer (isolated network?)\n");
+        }
+    }
+
+    /* filesystem round trip: write, read back, delete */
+    if (ofs_available()) {
+        const uint32_t N = 1500;
+        uint8_t* buf = (uint8_t*)kmalloc(2 * N);
+        bool ok = false;
+        if (buf) {
+            for (uint32_t i = 0; i < N; i++) buf[i] = (uint8_t)(i * 13 + 5);
+            ofs_stat_t st;
+            if (ofs_put("/selftest.tmp", buf, N) && ofs_stat("/selftest.tmp", &st) && st.size == N) {
+                int idx = ofs_lookup("/selftest.tmp");
+                int r = ofs_inode_read(idx, 0, buf + N, N);
+                ok = (r == (int)N && memcmp(buf, buf + N, N) == 0);
+            }
+            ok = ofs_remove("/selftest.tmp") && ok && ofs_lookup("/selftest.tmp") < 0;
+            kfree(buf);
+        }
+        st_report("filesystem write/read/delete (1500 B)", ok, "");
+
+        /* the inode table really holds a lot of files */
+        {
+            ofs_usage_t u0, u1;
+            ofs_usage(&u0);
+            if (u0.inodes_free >= 100) {
+                char name[16];
+                int made = 0;
+                bool all = true;
+                for (int pass = 0; pass < 3; pass++) {            /* 0 = create, 1 = find, 2 = remove */
+                    for (int i = 0; i < 100; i++) {
+                        int k = 0, v = i; char t[4]; int tn = 0;
+                        name[k++] = '/'; name[k++] = 's'; name[k++] = 't';
+                        if (!v) t[tn++] = '0';
+                        while (v) { t[tn++] = (char)('0' + v % 10); v /= 10; }
+                        while (tn) name[k++] = t[--tn];
+                        name[k] = '\0';
+                        if (pass == 0) { if (ofs_put(name, "x", 1)) made++; else all = false; }
+                        else if (pass == 1) { if (ofs_lookup(name) < 0) all = false; }
+                        else { if (!ofs_remove(name)) all = false; }
+                    }
+                }
+                ofs_usage(&u1);
+                st_report("inode table: 100 files created, found, removed", all && made == 100 && u1.inodes_free == u0.inodes_free && u1.used_blocks == u0.used_blocks, "");
+            } else {
+                p_str("  [ -- ] not enough free inodes for the 100-file check\n");
+            }
+        }
+    } else {
+        p_str("  [ -- ] no disk: filesystem checks skipped\n");
+    }
+
+    /* heap */
+    {
+        void* a = kmalloc(65536);
+        bool ok = (a != NULL);
+        if (a) { memset(a, 0xA5, 65536); kfree(a); }
+        void* b = kmalloc(65536);
+        ok = ok && (b != NULL);
+        if (b) kfree(b);
+        st_report("kernel heap alloc/free (64 KB x2)", ok, "");
+    }
+
+    p_dec((uint32_t)st_pass); p_str("/"); p_dec((uint32_t)st_total);
+    p_str(st_pass == st_total ? " checks passed. ALL GOOD.\n" : " checks passed. SOMETHING IS WRONG.\n");
+}
+
 /* ---------------- dispatcher ----------------------------------------- */
 
 bool net_shell_command(const char* line) {
@@ -236,6 +497,13 @@ bool net_shell_command(const char* line) {
 
     if (net_strcmp(argv[0], "ifconfig") == 0) { cmd_ifconfig(argc, argv); return true; }
     if (net_strcmp(argv[0], "arp") == 0)      { cmd_arp();                return true; }
+    if (net_strcmp(argv[0], "selftest") == 0) { cmd_selftest(); return true; }
+    if (net_strcmp(argv[0], "httpd") == 0) { cmd_httpd(argc, argv); return true; }
+    if (net_strcmp(argv[0], "fetch") == 0) {
+        if (argc != 5) p_str("usage: fetch <host> <port> <url-path> <ofs-path>   e.g. fetch 10.0.2.2 8000 /a.html /www/a.html\n");
+        else cmd_fetch(argv[1], argv[2], argv[3], argv[4]);
+        return true;
+    }
     if (net_strcmp(argv[0], "nslookup") == 0) {
         uint32_t ip, lit;
         if (argc != 2) p_str("usage: nslookup <name>\n");

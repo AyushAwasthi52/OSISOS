@@ -5,7 +5,8 @@ existing e1000 driver. Everything lives in `kernel/net/`.
 
 ```
  shell commands   ifconfig arp ping nslookup dns dhcp netstat nc http  net/netcmd.c
- built-in servers echo (TCP+UDP port 7)   HTTP (port 80)             net/services.c
+ httpd            static file server on port 80, streams from OFS      net/httpd.c
+ built-in servers echo (TCP+UDP port 7), polling of all services      net/services.c
  DHCP / DNS       lease acquisition+renewal; A-record resolver+cache net/dhcp.c  dns.c
  TCP              state machine, retransmit, flow control, sockets   net/tcp.c  tcp.h
  UDP              datagram sockets with receive queues               net/udp.c  udp.h
@@ -34,6 +35,8 @@ gateway/host `10.0.2.2`, DNS `10.0.2.3`). Log in (`admin` / `osisos`), then:
 | `nslookup <name>` | Resolve through DNS. `dns` shows the server, `dns <ip>` changes it. |
 | `dhcp` / `dhcp renew` | Show DHCP state and lease / renew the lease now. |
 | `arp` | ARP cache. |
+| `mkdir www` + `fetch <host> <port> <url> /www/<name>` | Download a file over HTTP into OFS: publishes it on the web server. |
+| `httpd` / `httpd root <dir>` | Server stats, last requests (access log), document root. |
 | `http 10.0.2.2 8000 /` | TCP client: HTTP GET to a server on your host. |
 | `nc 10.0.2.2 5555 hello` | TCP client: connect, send `hello\n`, print the reply. |
 | `netstat` | TCP socket table and states. |
@@ -103,6 +106,55 @@ fallback (`10.0.2.15`, DNS `10.0.2.3`) and retries in the background every minut
 (max 5 min, 8 entries), compression-pointer parsing with bounds checks, and it ignores replies with the
 wrong transaction id or source. Never call it from the network task (it waits for that task to deliver the reply).
 
+## Web server (`httpd.c`) and the filesystem it needs
+
+```
+mkdir www
+fetch 10.0.2.2 8000 /index.html /www/index.html     # from `python3 -m http.server 8000` on your host
+curl http://127.0.0.1:8080/                         # (run-user forwards host 8080 -> guest 80)
+```
+
+- Serves files from the OFS directory `/www` (change with `httpd root /other`). `GET` and `HEAD` only (405 otherwise);
+  `Content-Type` from the extension; `/dir` redirects to `/dir/`; a directory without `index.html` gets a listing;
+  `/_status` returns plain-text statistics; with no `/www` the built-in welcome page is served.
+- Files are **streamed from disk in 1 KB chunks**, so size is limited by OFS, not RAM. Slow clients cannot block
+  others (it only copies what the TCP send buffer has room for). 6 connections at once; the rest wait in the backlog.
+- Hardening: header size limit (431), target length limit (414), `.`/`..` segments, backslashes, control
+  characters and bad `%` escapes rejected with 400 *before* any filesystem lookup, 30 s idle timeout.
+
+OFS changes the web server needed (the old API still works; see the v2 notes below for what came after):
+
+| Change | Why |
+|---|---|
+| `ofs_lookup/stat/readdir/inode_read/put` (absolute paths) | The old API is relative to the shell's `cd` global; a server must not move your working directory. |
+| Files can span many sectors (stored contiguously, up to 2 MB) | The old limit was 512 bytes per file. |
+| `ofs_put` writes data first, then publishes the inode | A reader never sees a half-written file. |
+| IDE reads/writes run with interrupts off and have bounded waits | Shell and network tasks could interleave ATA command sequences and corrupt each other. |
+| `ofs_read_file` clamps its terminator | It wrote `buffer[size]`: a 1-byte stack overflow for 512-byte files and a huge one for big files (`cat bigfile`). |
+
+`fetch` buffers the whole download in RAM (max 256 KB).
+
+## Filesystem v2, loopback, self-test and the extras
+
+**OFS v2** (`fs/ofs.c`): 128 inodes (inode table in blocks 1-8, data from block 9). Every file is one contiguous
+extent; free space is *derived from the inode table* (first-fit over the gaps), so there is no bitmap that can get out of
+sync, deleted files' space is reused immediately, and shrinking a file frees its tail. New shell commands:
+`rm`, `rmdir`, `mv` (also moves into a directory), `df`. **v1 disks are upgraded automatically at boot**
+(data blocks are relocated, nothing is wiped; see `migrate_v1`). Limits: names up to 21 chars, files up to 2 MB, no
+permissions or timestamps; a file being streamed by httpd while it is deleted just aborts that transfer.
+
+**Loopback**: `127.0.0.x` and your own address are delivered internally, so `ping 127.0.0.1`, `nc localhost 7`,
+`http localhost` work even with no network.
+
+**`selftest`** runs the stack against itself and reports `[ OK ]` / `[FAIL]`: ICMP, UDP and a 3000-byte TCP echo
+over loopback, the HTTP server, a filesystem write/read/delete, creating 100 files in the inode table, and the heap.
+
+**`dmesg`** shows the kernel log (`klog()`; DHCP leases, HTTP requests, filesystem upgrades). Add your own with
+`klog("something happened: %I", ip)`.
+
+**Extras** (`core/extras.c`): `sysinfo`, `about`, `fortune`, `cowsay <text>`, `matrix`, `snake` (WASD, Q to quit), `sl`,
+and some easter eggs. Full-screen programs run in the shell task, so the web server keeps serving while you play.
+
 ## Design notes (things worth knowing)
 
 **Concurrency.** The PIT preempts tasks at 100 Hz, so the shell task and the
@@ -146,6 +198,8 @@ window.
 - **Out-of-order segments are dropped** (sender retransmits). Add a reassembly queue / SACK.
 - **No congestion control** (slow start, fast retransmit/recovery). Fine on a LAN; wrong on the internet.
 - **Fixed RTO**; add RTT estimation (RFC 6298).
+- **OFS**: contiguous extents mean a very fragmented disk can fail to fit a large file even with enough total free space; no permissions/timestamps. Subdirectory depth for `ofs_abspath` is 16.
+- **httpd**: no keep-alive, no `Range`, no `If-Modified-Since`/ETag (OFS has no timestamps), no upload (`PUT`).
 - **UDP**: no ICMP port-unreachable for closed ports (datagrams are silently dropped), no IP-level
   fragmentation of large datagrams.
 - **DHCP**: no ARP-conflict probe before using a lease, no DECLINE/RELEASE, no INIT-REBOOT.
