@@ -155,6 +155,22 @@ over loopback, the HTTP server, a filesystem write/read/delete, creating 100 fil
 **Extras** (`core/extras.c`): `sysinfo`, `about`, `fortune`, `cowsay <text>`, `matrix`, `snake` (WASD, Q to quit), `sl`,
 and some easter eggs. Full-screen programs run in the shell task, so the web server keeps serving while you play.
 
+## Crash handling (`arch/i386/exceptions.S`, `core/panic.c`)
+
+Before this, only divide-by-zero had an IDT entry: any other fault (page fault, GPF, invalid opcode ...) became a
+triple fault and a silent reset with no clue why. Now **all 32 CPU exception vectors** reach `exception_handler()`, which
+writes the event to the kernel log and paints a panic screen straight into VGA memory: the exception name and a
+plain-English cause (e.g. *NULL pointer dereference (write, kernel mode) at 00000000*), EIP/registers/CR0/CR2/CR3, the top
+stack words, uptime and the last kernel log lines. It then counts down 15 s and reboots (**R** = reboot now,
+**H** = halt and keep the screen). The web server and the disk come back after the reboot.
+
+- **NULL guard**: page 0 is unmapped after paging starts, so NULL-pointer bugs fault loudly instead of silently
+  reading/writing low memory.
+- **`kpanic("message")`**: call it from kernel code for unrecoverable conditions (it disables interrupts first).
+- **`crash null|div0|ud|gpf|page|panic`**: deliberately fault the kernel to see/test all of this.
+- Limits: a *double fault* caused by a stack overflow cannot be handled on the same stack (it triple-faults);
+  fixing that needs a dedicated TSS task gate. The panic report is not persisted to disk yet.
+
 ## Design notes (things worth knowing)
 
 **Concurrency.** The PIT preempts tasks at 100 Hz, so the shell task and the

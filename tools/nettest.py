@@ -396,6 +396,46 @@ def main():
         out = q.run("dmesg", 3)
         check("dmesg: logs httpd requests", "httpd: " in out and "GET /" in out, out)
 
+
+        # ================= crash handling: panic screen, reboot, recovery =================
+        def relogin(wait=4.5):
+            time.sleep(wait); q.type("admin\nosisos\n"); time.sleep(1.5)
+
+        cases = (("null", ["Page Fault", "NULL pointer dereference", "write, kernel mode", "CR2=00000000"]),
+                 ("div0", ["Divide Error", "Division by zero"]),
+                 ("ud",   ["Invalid Opcode", "cannot execute"]),
+                 ("gpf",  ["General Protection Fault"]),
+                 ("page", ["Page Fault", "unmapped address", "1F000000"]),
+                 ("panic", ["manual panic requested"]))
+        for kind, expect in cases:
+            q.type("crash %s\n" % kind); time.sleep(2.5); s = q.screen()
+            need = ["K E R N E L   P A N I C", "Rebooting in", "Uptime:", "Last kernel log lines"] + expect + (["EIP="] if kind != "panic" else [])
+            q.type("r"); time.sleep(4.5)
+            check("panic screen: crash %s (decoded cause, registers, log) and R reboots" % kind,
+                  all(n in s for n in need) and "login:" in q.screen(), s)
+            q.type("admin\nosisos\n"); time.sleep(1.5)
+
+        q.type("crash null\n"); time.sleep(2.5); q.type("h"); time.sleep(3)
+        s = q.screen(); time.sleep(18)                    # longer than the 15 s countdown
+        s2 = q.screen()
+        check("panic screen: H halts and keeps the screen (no reboot after 20 s)", "System halted" in s and "System halted" in s2 and "login:" not in s2, s2)
+
+        # leave the halted machine: reset it through the QEMU monitor, then test the AUTOMATIC reboot path
+        q.cmd("system_reset"); relogin(5)
+        q.type("crash null\n"); time.sleep(2.5)
+        shown = "K E R N E L   P A N I C" in q.screen()
+        time.sleep(17)                                    # 15 s countdown + reboot
+        back = q.screen()
+        check("automatic reboot after the 15 s countdown", shown and "login:" in back and "P A N I C" not in back, back)
+        time.sleep(4)
+        st, h, body = get("/data.bin")
+        check("recovery: web server is back after the crash and the DISK is intact (20000 B identical)", st == 200 and body == DATA, f"{st} {len(body)}")
+        st, h, body = get("/huge.bin")
+        check("recovery: 150000-byte file still byte-identical", st == 200 and body == HUGE, f"{st} {len(body)}")
+        q.type("admin\nosisos\n"); time.sleep(1.5)
+        out = q.run("selftest", 30, until="checks passed")
+        check("recovery: selftest passes after a crash/reboot cycle", "ALL GOOD" in out, out)
+
         time.sleep(3)
         out = q.run("netstat", 1.5)
         check("netstat: only listeners left after teardown", out.count("ESTABLISHED") == 0 and "LISTEN" in out, out)

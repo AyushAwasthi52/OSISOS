@@ -14,7 +14,7 @@ CFLAGS = -m32 -ffreestanding -O2 -Wall -Wextra -fno-pie -mno-sse -mno-sse2 -mno-
 LDFLAGS = -m32 -T linker.ld -nostdlib -lgcc -no-pie -Wl,--build-id=none
 
 # Files to build (Now organized into subdirectories)
-OBJS = arch/i386/boot.o \
+OBJS = arch/i386/boot.o arch/i386/exceptions.o core/panic.o \
        arch/i386/gdt_flush.o arch/i386/gdt.o \
        arch/i386/idt_flush.o arch/i386/idt.o \
        arch/i386/pic.o arch/i386/paging_flush.o \

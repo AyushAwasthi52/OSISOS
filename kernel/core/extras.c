@@ -353,6 +353,24 @@ static void cmd_sl(void) {
 }
 
 /* ------------------------------------------------------------------ */
+/* crash: deliberately fault the kernel (to see/test the panic screen)  */
+/* ------------------------------------------------------------------ */
+
+extern void kpanic(const char* msg);
+
+static void cmd_crash(const char* kind) {
+    if (eq(kind, "null"))      { *(volatile int*)0 = 1; }
+    else if (eq(kind, "div0")) {   /* C division by zero is undefined behaviour and the compiler deletes it: use the real instruction */
+        __asm__ volatile ("xor %%edx, %%edx; mov $1, %%eax; xor %%ecx, %%ecx; div %%ecx" : : : "eax", "ecx", "edx", "cc");
+    }
+    else if (eq(kind, "ud"))   { __asm__ volatile ("ud2"); }
+    else if (eq(kind, "gpf"))  { __asm__ volatile ("mov $0x7F8, %%ax; mov %%ax, %%ds" : : : "ax"); }
+    else if (eq(kind, "page")) { *(volatile int*)0x1F000000 = 1; }          /* beyond the 32 MB identity map */
+    else if (eq(kind, "panic")){ kpanic("manual panic requested with `crash panic`"); }
+    else { pr("usage: crash null|div0|ud|gpf|page|panic   (DEBUG: crashes the kernel on purpose)\n"); }
+}
+
+/* ------------------------------------------------------------------ */
 /* dispatcher                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -373,6 +391,7 @@ bool extras_command(const char* line) {
     if (eq(line, "matrix"))   { cmd_matrix();  return true; }
     if (eq(line, "snake"))    { cmd_snake();   return true; }
     if (eq(line, "sl"))       { cmd_sl();      return true; }
+    if (eq(line, "crash") || starts(line, "crash ")) { cmd_crash(line[5] ? line + 6 : ""); return true; }
     if (eq(line, "cowsay") || starts(line, "cowsay ")) { cmd_cowsay(line[6] ? line + 7 : ""); return true; }
 
     /* easter eggs */

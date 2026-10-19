@@ -6,6 +6,7 @@ extern void isr0(void); // Our Divide-By-Zero handler from Assembly
 extern void isr32(void); // Timer Interrupt handler from Assembly
 extern void isr33(void); // Keyboard Interrupt handler from Assembly
 extern void isr128(void); // System Call Handler from Assembly
+extern uint32_t exc_stubs[32]; // entry points for CPU exceptions 0-31 (exceptions.S)
 
 idt_entry_t idt_entries[256];
 idt_ptr_t   idt_ptr;
@@ -27,8 +28,9 @@ void init_idt(void) {
         idt_set_gate(i, 0, 0, 0);
     }
 
-    // Map Exception 0 (Divide by Zero)
-    idt_set_gate(0, (uint32_t)isr0, 0x08, 0x8E);
+    // Map ALL CPU exceptions (0-31) to the panic handler. Without these entries any fault
+    // (page fault, GPF, invalid opcode ...) escalates to a triple fault and a silent reset.
+    for (int i = 0; i < 32; i++) idt_set_gate((uint8_t)i, exc_stubs[i], 0x08, 0x8E);
 
     // Map Hardware Interrupt 32 (Timer IRQ 0)
     idt_set_gate(32, (uint32_t)isr32, 0x08, 0x8E);

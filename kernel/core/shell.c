@@ -75,6 +75,7 @@ static void execute_command(char* cmd) {
         terminal_print_string("  rm/rmdir/mv/df - delete, move files, disk usage\n");
         terminal_print_string("  sysinfo, dmesg, selftest - system info, kernel log, self-check\n");
         terminal_print_string("  fortune, cowsay, snake, matrix, sl - fun (there may be secrets)\n");
+        terminal_print_string("  crash <kind>  - DEBUG: fault the kernel to see the panic screen\n");
         terminal_print_string("  ping          - Send a raw ethernet test packet\n");
         terminal_print_string("  ping <host>   - ICMP echo (host = IP or DNS name)\n");
         terminal_print_string("  nslookup <n>  - DNS lookup      dns [ip] - show/set DNS server\n");
