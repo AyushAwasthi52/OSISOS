@@ -14,15 +14,15 @@ CFLAGS = -m32 -ffreestanding -O2 -Wall -Wextra -fno-pie -mno-sse -mno-sse2 -mno-
 LDFLAGS = -m32 -T linker.ld -nostdlib -lgcc -no-pie -Wl,--build-id=none
 
 # Files to build (Now organized into subdirectories)
-OBJS = arch/i386/boot.o \
+OBJS = arch/i386/boot.o arch/i386/exceptions.o core/panic.o \
        arch/i386/gdt_flush.o arch/i386/gdt.o \
        arch/i386/idt_flush.o arch/i386/idt.o \
        arch/i386/pic.o arch/i386/paging_flush.o \
        arch/i386/switch.o arch/i386/usermode.o \
        drivers/keyboard.o drivers/timer.o drivers/ide.o drivers/pci.o drivers/e1000.o drivers/rtc.o \
-       mm/pmm.o mm/paging.o mm/kheap.o fs/ofs.o \
-       net/netstr.o net/net.o net/udp.o net/tcp.o net/dhcp.o net/dns.o net/services.o net/netcmd.o \
-       core/task.o core/kernel.o core/syscall.o core/shell.o core/editor.o
+       mm/pmm.o mm/paging.o mm/kheap.o fs/ofs.o fs/fscmd.o \
+       net/netstr.o net/net.o net/udp.o net/tcp.o net/dhcp.o net/dns.o net/httpd.o net/services.o net/netcmd.o \
+       core/sha256.o core/auth.o core/klog.o core/extras.o core/task.o core/kernel.o core/syscall.o core/shell.o core/editor.o
 
 all: osisos.bin
 

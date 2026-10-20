@@ -241,7 +241,8 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
 
     /* Initialize Virtual Memory (Paging) */
     init_paging();
-    terminal_print_string("Paging Enabled! Virtual Memory is now active.\n");
+    paging_guard_null_page();
+    terminal_print_string("Paging Enabled! Virtual Memory is now active (page 0 guarded).\n");
 
     /* Initialize the Kernel Heap Allocator */
     init_kheap();

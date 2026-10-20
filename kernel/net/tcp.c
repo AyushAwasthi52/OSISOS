@@ -762,6 +762,7 @@ int tcp_accept(int s, uint32_t timeout) {
 }
 
 int tcp_connect(int s, uint32_t ip, uint16_t port, uint32_t timeout) {
+    ip = net_canon(ip);
     uint32_t f = net_lock();
     tcb_t* t = sock(s);
     if (!t || t->state != TCP_CLOSED || netif.ip == 0) { net_unlock(f); return TCP_ERR; }

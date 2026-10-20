@@ -20,6 +20,7 @@
 #include "dhcp.h"
 #include "udp.h"
 #include "net.h"
+#include "klog.h"
 
 #define DHCP_SERVER_PORT 67
 #define DHCP_CLIENT_PORT 68
@@ -162,6 +163,7 @@ static void fallback(void) {
         net_set_ip(ip, IP4(255, 255, 255, 0), IP4(10, 0, 2, 2));
         netif.dns = IP4(10, 0, 2, 3);
     }
+    klog("dhcp: no server answered, using fallback address %I", ip);
     d.state = DHCP_FALLBACK;
     d.t_sent = net_now();
 }
@@ -180,6 +182,7 @@ static void apply_lease(const dhcp_reply_t* r) {
     d.t2     = now + (lease / 8 * 7) * NET_HZ;
     d.expire = now + lease * NET_HZ;
     d.server = r->server ? r->server : d.server;
+    klog("dhcp: bound %I/%I gw %I dns %I lease %u s (server %I)", r->yiaddr, mask, r->router, netif.dns, lease, d.server);
     d.state  = DHCP_BOUND;
     d.tries  = 0;
 }
@@ -271,6 +274,7 @@ void dhcp_poll(void) {
 
         case DHCP_RENEWING:
             if ((int32_t)(net_now() - d.expire) >= 0) {                    /* lease ran out */
+                klog("dhcp: lease expired, dropping %I", netif.ip);
                 net_set_ip(0, 0, 0);
                 d.state = DHCP_INIT;
                 break;

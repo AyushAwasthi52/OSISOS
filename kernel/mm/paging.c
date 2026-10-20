@@ -74,3 +74,9 @@ void map_page(uint32_t physical_addr, uint32_t virtual_addr) {
     // Flush the TLB
     __asm__ volatile ("invlpg (%0)" : : "r" (virtual_addr) : "memory");
 }
+
+void paging_guard_null_page(void) {
+    uint32_t* pt0 = (uint32_t*)(kernel_page_directory[0] & ~0xFFFu);
+    pt0[0] = 0;                                              /* not present */
+    __asm__ volatile ("invlpg (%0)" : : "r" (0) : "memory");
+}
