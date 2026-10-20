@@ -171,6 +171,24 @@ stack words, uptime and the last kernel log lines. It then counts down 15 s and 
 - Limits: a *double fault* caused by a stack overflow cannot be handled on the same stack (it triple-faults);
   fixing that needs a dedicated TSS task gate. The panic report is not persisted to disk yet.
 
+## Authentication (`core/auth.c`, `core/sha256.c`)
+
+Login no longer compares against a hardcoded string. Passwords are stored as **salted, iterated hashes**
+(PBKDF2-HMAC-SHA256, 4096 iterations, 16-byte random salt, fresh salt on every change) in `/etc/shadow`; the
+plaintext is never stored and the typed password is wiped from memory right after use. The SHA-256 / HMAC / PBKDF2
+code is verified against Python's `hashlib` (including SHA-256 block-boundary lengths and the RFC 7914 vector), and
+`selftest` re-checks known answers inside the OS.
+
+- **First boot** creates `admin` / `osisos` and flags it *must change*: the shell warns on every login until you run **`passwd`**
+  (asks for the current password, then the new one twice, input masked, 6-63 characters).
+- **Throttling**: 3 consecutive failures lock logins for 5 s, doubling each further failure up to 5 min. While locked, the password
+  is not even checked, so guessing is rate-limited. Unknown users take as long as wrong passwords (no user enumeration by timing),
+  comparison is constant-time, and every success/failure goes to `dmesg` (user names are sanitised in the log).
+- **`/etc` is invisible to the web server** (404, and hidden from listings) even when the document root is `/`.
+- Fixed: login used to copy up to 255 typed characters into 32-byte buffers (a global buffer overflow at the login prompt).
+- Limits: one account (`admin`) and no privilege levels; no password ageing; the default password is public until changed;
+  the console is local, there is no remote login yet.
+
 ## Design notes (things worth knowing)
 
 **Concurrency.** The PIT preempts tasks at 100 Hz, so the shell task and the

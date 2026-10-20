@@ -22,7 +22,7 @@ OBJS = arch/i386/boot.o arch/i386/exceptions.o core/panic.o \
        drivers/keyboard.o drivers/timer.o drivers/ide.o drivers/pci.o drivers/e1000.o drivers/rtc.o \
        mm/pmm.o mm/paging.o mm/kheap.o fs/ofs.o fs/fscmd.o \
        net/netstr.o net/net.o net/udp.o net/tcp.o net/dhcp.o net/dns.o net/httpd.o net/services.o net/netcmd.o \
-       core/klog.o core/extras.o core/task.o core/kernel.o core/syscall.o core/shell.o core/editor.o
+       core/sha256.o core/auth.o core/klog.o core/extras.o core/task.o core/kernel.o core/syscall.o core/shell.o core/editor.o
 
 all: osisos.bin
 

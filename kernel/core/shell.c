@@ -22,6 +22,7 @@ static int strcmp(const char* s1, const char* s2) {
 #include "editor.h"
 #include "io.h"
 #include "net.h"
+#include "auth.h"
 
 extern void send_ping_packet(void);
 extern void terminal_print_dec(uint32_t val);
@@ -39,7 +40,11 @@ static void print_2digit(uint8_t val) {
 static bool is_logged_in = false;
 static bool entering_password = false;
 static char username[32];
-static char password[32];
+static char password[AUTH_MAX_PASSWORD + 1];
+
+// `passwd` flow: 0 = idle, 1 = asking for the current password, 2 = new password, 3 = confirm
+static int  pw_stage = 0;
+static char pw_new[AUTH_MAX_PASSWORD + 1];
 
 extern bool fs_shell_command(const char* line);
 extern bool extras_command(const char* line);
@@ -75,6 +80,7 @@ static void execute_command(char* cmd) {
         terminal_print_string("  rm/rmdir/mv/df - delete, move files, disk usage\n");
         terminal_print_string("  sysinfo, dmesg, selftest - system info, kernel log, self-check\n");
         terminal_print_string("  fortune, cowsay, snake, matrix, sl - fun (there may be secrets)\n");
+        terminal_print_string("  passwd        - change your password\n");
         terminal_print_string("  crash <kind>  - DEBUG: fault the kernel to see the panic screen\n");
         terminal_print_string("  ping          - Send a raw ethernet test packet\n");
         terminal_print_string("  ping <host>   - ICMP echo (host = IP or DNS name)\n");
@@ -173,6 +179,11 @@ static void execute_command(char* cmd) {
     } else if (strcmp(cmd, "ping") == 0) {
         terminal_print_string("Pinging network...\n");
         send_ping_packet();
+    } else if (strcmp(cmd, "passwd") == 0) {
+        pw_stage = 1;
+        terminal_print_string("Changing password for ");
+        terminal_print_string(username);
+        terminal_print_string(".\nCurrent password: ");
     } else if (strcmp(cmd, "logout") == 0) {
         for (int i = 0; i < 25; i++) terminal_putchar('\n');
         terminal_print_string("==================================\n");
@@ -199,9 +210,72 @@ static void execute_command(char* cmd) {
     }
 }
 
+static void wipe_buf(char* p, int n) { volatile char* v = p; while (n-- > 0) *v++ = 0; }
+
+static void print_prompt(void) {
+    terminal_print_string(username);
+    terminal_print_string("@osisos> ");
+}
+
+static void print_wait_message(uint32_t secs) {
+    terminal_print_string("Too many failed attempts. Try again in ");
+    terminal_print_dec(secs);
+    terminal_print_string(" s.\n");
+}
+
+// One line of input while in the `passwd` dialogue.
+static void password_dialogue(const char* line) {
+    if (pw_stage == 1) {
+        uint32_t wait = 0;
+        auth_result_t r = auth_verify(username, line, &wait);
+        if (r == AUTH_OK) {
+            pw_stage = 2;
+            terminal_print_string("New password: ");
+        } else {
+            pw_stage = 0;
+            terminal_print_string("Authentication failed.\n");
+            if (r == AUTH_LOCKED || wait) print_wait_message(wait);
+            print_prompt();
+        }
+    } else if (pw_stage == 2) {
+        int n = 0;
+        while (line[n]) n++;
+        if (n < AUTH_MIN_PASSWORD || n > AUTH_MAX_PASSWORD) {
+            pw_stage = 0;
+            terminal_print_string("Password must be 6 to 63 characters. Not changed.\n");
+            print_prompt();
+        } else {
+            for (int k = 0; k <= n; k++) pw_new[k] = line[k];
+            pw_stage = 3;
+            terminal_print_string("Retype new password: ");
+        }
+    } else {
+        bool same = true;
+        int k = 0;
+        while (line[k] || pw_new[k]) { if (line[k] != pw_new[k]) { same = false; break; } k++; }
+        if (!same) {
+            terminal_print_string("Passwords do not match. Not changed.\n");
+        } else {
+            bool saved = false;
+            if (auth_set_password(username, pw_new, &saved)) {
+                terminal_print_string("Password updated.");
+                if (!saved) terminal_print_string(" (WARNING: no disk, it will be lost at reboot)");
+                terminal_print_string("\n");
+            } else {
+                terminal_print_string("Could not change the password.\n");
+            }
+        }
+        wipe_buf(pw_new, sizeof(pw_new));
+        pw_stage = 0;
+        print_prompt();
+    }
+}
+
 void shell_main(void) {
     char input_buffer[256];
     int buf_idx = 0;
+
+    auth_init();                                   // load /etc/shadow (creates the default account on first boot)
 
     terminal_print_string("\n==================================\n");
     terminal_print_string("      Welcome to OSISOS v1.0      \n");
@@ -213,35 +287,50 @@ void shell_main(void) {
         if (c != 0) {
             if (c == '\n') {
                 input_buffer[buf_idx] = '\0';
-                
+
                 if (!is_logged_in) {
                     if (!entering_password) {
-                        // Store username
-                        for (int i = 0; i <= buf_idx; i++) username[i] = input_buffer[i];
+                        // Store the user name (bounded: the typed line can be up to 255 characters)
+                        int k = 0;
+                        while (k < (int)sizeof(username) - 1 && k < buf_idx) { username[k] = input_buffer[k]; k++; }
+                        username[k] = '\0';
                         entering_password = true;
                         terminal_print_string("\npassword: ");
                     } else {
-                        // Store password and verify
-                        for (int i = 0; i <= buf_idx; i++) password[i] = input_buffer[i];
+                        int k = 0;
+                        while (k < (int)sizeof(password) - 1 && k < buf_idx) { password[k] = input_buffer[k]; k++; }
+                        password[k] = '\0';
                         terminal_putchar('\n');
-                        
-                        // Hardcoded login for now
-                        if (strcmp(username, "admin") == 0 && strcmp(password, "osisos") == 0) {
+
+                        uint32_t wait = 0;
+                        auth_result_t r = auth_verify(username, password, &wait);
+                        wipe_buf(password, sizeof(password));      // never keep a typed password around
+                        if (r == AUTH_OK) {
                             is_logged_in = true;
                             terminal_print_string("\nLogin successful. Type 'help' for commands.\n");
-                            terminal_print_string("admin@osisos> ");
+                            if (auth_has_default_password(username))
+                                terminal_print_string("WARNING: this account still uses the default password. Run 'passwd' now.\n");
+                            print_prompt();
                         } else {
-                            terminal_print_string("\nLogin incorrect.\n\nlogin: ");
+                            if (r == AUTH_LOCKED) print_wait_message(wait);
+                            else {
+                                terminal_print_string("\nLogin incorrect.\n");
+                                if (wait) print_wait_message(wait);
+                            }
+                            terminal_print_string("\nlogin: ");
                             entering_password = false;
                         }
                     }
                 } else {
                     terminal_putchar('\n');
-                    execute_command(input_buffer);
-                    if (is_logged_in) {
-                        terminal_print_string("admin@osisos> ");
+                    if (pw_stage) {
+                        password_dialogue(input_buffer);
+                    } else {
+                        execute_command(input_buffer);
+                        if (pw_stage == 0 && is_logged_in) print_prompt();
                     }
                 }
+                wipe_buf(input_buffer, sizeof(input_buffer));      // typed passwords must not linger on the stack
                 buf_idx = 0;
             } else if (c == '\b') {
                 if (buf_idx > 0) {
@@ -251,7 +340,7 @@ void shell_main(void) {
             } else {
                 if (buf_idx < 255) {
                     input_buffer[buf_idx++] = c;
-                    if (entering_password && !is_logged_in) {
+                    if ((entering_password && !is_logged_in) || pw_stage) {
                         terminal_putchar('*'); // Mask password
                     } else {
                         terminal_putchar(c);

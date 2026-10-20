@@ -273,6 +273,7 @@ static void reply_listing(conn_t* c, int dir_inode, const char* url_path) {
     ofs_dirent_t e;
     int pos = 0, shown = 0;
     while ((pos = ofs_readdir(dir_inode, pos, &e)) >= 0) {
+        if (dir_inode == OFS_ROOT_DIR && e.type == OFS_TYPE_DIR && net_strcmp(e.name, "etc") == 0) continue;   /* hidden: credentials */
         if (n > HTTPD_BODY_MAX - 140) { n = sapp(b, n, HTTPD_BODY_MAX, "<li>...</li>\n"); break; }
         n = sapp(b, n, HTTPD_BODY_MAX, "<li><a href=\"");
         n = sapp(b, n, HTTPD_BODY_MAX, e.name);
@@ -345,6 +346,10 @@ static void build_response(conn_t* c) {
     else full_path[0] = '\0';
     if (fl + (int)net_strlen(dec_path) + 12 >= (int)sizeof(full_path)) { reply_error(c, 414, NULL); return; }
     sapp(full_path, fl, sizeof(full_path), dec_path);
+
+    /* /etc holds /etc/shadow (password hashes). It is never served, even if the document root is "/". */
+    if ((full_path[0] == '/' && full_path[1] == 'e' && full_path[2] == 't' && full_path[3] == 'c' &&
+         (full_path[4] == '\0' || full_path[4] == '/'))) { reply_error(c, 404, NULL); return; }
 
     bool url_is_root = (net_strcmp(dec_path, "/") == 0);
     int idx = ofs_lookup(full_path[0] ? full_path : "/");

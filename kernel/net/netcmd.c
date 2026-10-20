@@ -24,6 +24,7 @@
 #include "ofs.h"
 #include "kheap.h"
 #include "udp.h"
+#include "auth.h"
 
 extern void terminal_print_string(const char* str);
 extern void terminal_putchar(char c);
@@ -466,6 +467,8 @@ static void cmd_selftest(void) {
     } else {
         p_str("  [ -- ] no disk: filesystem checks skipped\n");
     }
+
+    st_report("crypto: SHA-256 and PBKDF2 known answers", auth_selftest(), "");
 
     /* heap */
     {

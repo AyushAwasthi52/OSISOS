@@ -124,6 +124,8 @@ def main():
         check("DHCP: leased %s (not the 10.0.2.15 fallback)" % GUEST,
               "inet " + GUEST in out and "gw " + GW in out and "dhcp BOUND" in out and "dns " + NET + ".3" in out, out)
 
+        out = q.run("dmesg", 3)
+        check("dmesg: DHCP lease and first-boot auth setup are in the kernel log", "dhcp: bound" in out and "auth: first boot" in out, out)
         out = q.run("ping " + GW, 8, until="seq=4")
         check("ICMP ping gateway (4/4 replies)", out.count("reply") >= 4, out)
 
@@ -391,8 +393,7 @@ def main():
         check("HTTP 418 I'm a teapot", st == 418 and b"teapot" in body, f"{st} {body[:60]}")
 
         out = q.run("dmesg", 3, until="httpd:")
-        check("dmesg: DHCP lease + httpd requests are in the kernel log",
-              "dhcp: bound " + GUEST in out or "dhcp: bound" in out, out)
+        check("dmesg: shows recent httpd requests (last 20 lines)", "httpd: " in out and "GET /teapot" in out, out)
         out = q.run("dmesg", 3)
         check("dmesg: logs httpd requests", "httpd: " in out and "GET /" in out, out)
 
@@ -465,8 +466,10 @@ def main():
         q.run("httpd root /", 2)
         st, h, body = get("/hello.txt"); st2, h2, body2 = get("/docs/note.txt")
         check("v1 disk: old files read back byte-identical from their new location", st == 200 and body == HELLO and st2 == 200 and body2 == NOTE, f"{st} {body} {st2} {len(body2)}")
+        st3, _, _ = get("/etc/shadow"); st4, _, lst = get("/")
+        check("httpd never serves /etc (password hashes) even with the docroot set to /", st3 == 404 and b"etc" not in lst and b"hello.txt" in lst, f"{st3} {lst[:200]}")
         out = q.run("df", 2, until="inodes free")
-        check("v1 disk: now 128 inodes, 2 files + 1 dir", "files: 2" in out and "dirs: 1" in out and "/128" in out, out)
+        check("v1 disk: now 128 inodes (2 migrated files + docs dir + the new /etc/shadow)", "files: 3" in out and "dirs: 2" in out and "/128" in out, out)
         ok, o = wait_saved("fetch %s %d /small /second.txt" % (GW, HOST_HTTP_PORT), 13)
         check("v1 disk: new files can be written beside migrated ones", ok and get("/docs/note.txt")[2] == NOTE and get("/second.txt")[2] == b"note-in-docs\n", o)
         q.close(); time.sleep(1)
@@ -474,6 +477,87 @@ def main():
         boot = q.screen(); q.type("admin\nosisos\n"); time.sleep(1.5); q.run("httpd root /", 2)
         check("v1 disk: second boot is plain v2 (no migration again) and data persists",
               "upgraded" not in boot and get("/hello.txt")[2] == HELLO and get("/docs/note.txt")[2] == NOTE and get("/second.txt")[0] == 200, boot)
+        q.close()
+
+
+        # ================= authentication: hashed passwords, throttling, passwd =================
+        import hashlib, re
+        AUTHDISK = "/tmp/osisos-auth.img"
+        with open(AUTHDISK, "wb") as f: f.truncate(10 * 1024 * 1024)
+        try: q.close()
+        except Exception: pass
+        time.sleep(1.5)
+        q = Qemu(AUTHDISK); time.sleep(4)
+
+        def login(user, pw, wait=2.5):
+            q.type(user + "\n"); time.sleep(0.4); q.type(pw + "\n"); time.sleep(wait); return q.screen()
+        def shadow_entry():
+            data = open(AUTHDISK, "rb").read()
+            m = re.search(rb"admin:(\d+):([0-9a-f]{32}):([0-9a-f]{64}):([01])\n", data)
+            return (int(m.group(1)), m.group(2).decode(), m.group(3).decode(), m.group(4).decode()) if m else None
+
+        s = login("admin", "osisos")
+        check("auth: first boot - default admin/osisos works and warns to change it", "Login successful" in s and "default password" in s, s)
+        out = q.run("dmesg", 3, until="auth:")
+        check("auth: first boot creates the account and says so in the kernel log",
+              "auth: first boot, created default admin account" in out, out)
+
+        e1 = shadow_entry()
+        check("auth: /etc/shadow on disk holds a salted PBKDF2 hash that matches Python's hashlib",
+              e1 is not None and e1[0] == 4096 and e1[3] == "1" and
+              hashlib.pbkdf2_hmac("sha256", b"osisos", bytes.fromhex(e1[1]), 4096, 32).hex() == e1[2], str(e1))
+        check("auth: the plaintext password is not on the disk", b"admin:osisos" not in open(AUTHDISK, "rb").read())
+
+        q.run("logout", 1.5)
+        s = login("admin", "wrongpass1")
+        check("auth: wrong password rejected", "Login incorrect" in s and "Login successful" not in s, s)
+        s = login("nobody", "osisos")
+        check("auth: unknown user rejected (same message)", "Login incorrect" in s and "Login successful" not in s, s)
+        s = login("a" * 70, "b" * 70, 3)
+        check("auth: 70-char user/password handled safely (the old code overflowed 32-byte buffers); 3rd failure locks out",
+              "Login incorrect" in s and "Try again in" in s, s)
+        s = login("admin", "osisos", 2)
+        check("auth: the CORRECT password is refused while locked out", "Too many failed attempts" in s and "Login successful" not in s, s)
+        time.sleep(6)
+        s = login("admin", "osisos", 2.5)
+        check("auth: login works again once the lockout expires", "Login successful" in s, s)
+
+        # ---- passwd ----
+        q.type("passwd\n"); time.sleep(1); q.type("wrongone1\n"); time.sleep(2.5)
+        check("passwd: wrong current password refused", "Authentication failed" in q.screen(), q.screen())
+        q.type("passwd\n"); time.sleep(1); q.type("osisos\n"); time.sleep(2.5); q.type("abc\n"); time.sleep(0.8)
+        check("passwd: too-short password refused", "6 to 63" in q.screen(), q.screen())
+        q.type("passwd\n"); time.sleep(1); q.type("osisos\n"); time.sleep(2.5); q.type("s3cretpw9\n"); time.sleep(0.8); q.type("different99\n"); time.sleep(0.8)
+        check("passwd: mismatched confirmation refused", "do not match" in q.screen(), q.screen())
+        q.type("passwd\n"); time.sleep(1); q.type("osisos\n"); time.sleep(2.5); q.type("s3cretpw9\n"); time.sleep(0.8); q.type("s3cretpw9\n"); time.sleep(0.8)
+        s = q.screen()
+        check("passwd: password changed, input was masked", "Password updated." in s and "s3cretpw9" not in s and "********" in s, s)
+
+        e2 = shadow_entry()
+        check("auth: new hash on disk is correct PBKDF2 of the new password, with a FRESH salt, default flag cleared",
+              e2 is not None and e2[1] != e1[1] and e2[2] != e1[2] and e2[3] == "0" and
+              hashlib.pbkdf2_hmac("sha256", b"s3cretpw9", bytes.fromhex(e2[1]), 4096, 32).hex() == e2[2], str(e2))
+
+        q.run("logout", 1.5)
+        s = login("admin", "osisos")
+        check("auth: the OLD password no longer works", "Login incorrect" in s and "Login successful" not in s, s)
+        s = login("admin", "s3cretpw9", 2.5)
+        check("auth: the new password works and no default-password warning any more",
+              "Login successful" in s and "default password" not in s, s)
+
+        out = q.run("dmesg", 3, until="password changed")
+        check("auth: failures, lockout and password change are in the kernel log",
+              "auth: FAILED login" in out and "locked for 5 s" in out and "password changed for 'admin' (saved)" in out, out)
+
+        # ---- persistence across a reboot ----
+        q.type("reboot\n"); time.sleep(6)
+        s = login("admin", "osisos")
+        ok_old_rejected = "Login incorrect" in s and "Login successful" not in s
+        s = login("admin", "s3cretpw9", 2.5)
+        check("auth: after a reboot the changed password persists (old rejected, new accepted)",
+              ok_old_rejected and "Login successful" in s and "default password" not in s, s)
+        out = q.run("dmesg", 3, until="auth:")
+        check("auth: existing /etc/shadow is loaded (not recreated) on the next boot", "auth: loaded /etc/shadow" in out, out)
         q.close()
 
     finally:
