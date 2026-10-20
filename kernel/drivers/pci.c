@@ -37,6 +37,23 @@ void pci_write_config_32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset
     outl(PCI_CONFIG_DATA, value);
 }
 
+static bool is_e1000_device(uint16_t vendor_id, uint16_t device_id) {
+    if (vendor_id != E1000_VENDOR_ID) return false;
+    switch (device_id) {
+        case 0x100E: // 82540EM (QEMU default & VirtualBox Desktop)
+        case 0x100F: // 82545EM (VirtualBox MT Server)
+        case 0x1004: // 82543GC (VirtualBox T Server)
+        case 0x1000: // 82542
+        case 0x1008: // 82544EI
+        case 0x1019: // 82547EI
+        case 0x1026: // 82545GM
+        case 0x107C: // 82541PI
+            return true;
+        default:
+            return false;
+    }
+}
+
 void init_pci(void) {
     // Scan all buses, slots, and functions (Naive brute-force scan)
     for (uint16_t bus = 0; bus < 256; bus++) {
@@ -59,7 +76,7 @@ void init_pci(void) {
                 }
                 
                 // Is it our glorious Intel E1000 Gigabit Ethernet card?
-                if (vendor_id == E1000_VENDOR_ID && device_id == E1000_DEVICE_ID) {
+                if (is_e1000_device(vendor_id, device_id)) {
                     e1000_found = true;
                     e1000_device.bus = bus;
                     e1000_device.slot = slot;

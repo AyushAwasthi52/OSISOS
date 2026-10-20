@@ -48,6 +48,17 @@ Host side (while the VM runs):
 python3 -m http.server 8000            # then, in OSISOS:  http 10.0.2.2 8000 /
 curl http://127.0.0.1:8080/            # served BY the OSISOS kernel (port 80)
 nc 127.0.0.1 8007                      # echo server inside OSISOS (port 7)
+nc 127.0.0.1 9999                      # message service: prints directly to OSISOS screen
+```
+
+To receive messages across your local Wi-Fi from another machine:
+```sh
+# On your machine (Arch Linux): allow incoming port 9999 in firewall
+sudo ufw allow 9999/tcp
+
+# From any friend / other computer on the same Wi-Fi:
+nc <your-wifi-ip> 9999
+# Type a message and press Enter -> appears live on the OSISOS console!
 ```
 
 Run the automated suite (needs `qemu-system-i386`, Python 3):

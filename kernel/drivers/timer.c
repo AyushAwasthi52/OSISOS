@@ -22,13 +22,6 @@ void timer_handler(void) {
      */
     if (tick % 100 == 0) {
         seconds_passed++;
-        
-        // Print a simple heartbeat message on Row 2
-        if (seconds_passed % 2 == 0) {
-            kernel_print("System Uptime: Tick [TOCK]", 0x0E, 2); // Yellow text
-        } else {
-            kernel_print("System Uptime: [TICK] Tock", 0x0E, 2);
-        }
     }
 
     /* We MUST send an End of Interrupt (EOI) to the Master PIC (Port 0x20) */

@@ -2,3 +2,5 @@
 *.o
 *.bin
 *.iso
+*.d
+drive2.img

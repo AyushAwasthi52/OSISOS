@@ -87,8 +87,16 @@ static bool parse_uint(const char* s, uint32_t* out) {
 static bool resolve_host(const char* s, uint32_t* ip) {
     if (net_strcmp(s, "localhost") == 0) { *ip = IP4(127, 0, 0, 1); return true; }
     if (net_parse_ip(s, ip)) return true;
+    if (netif.ip == 0) {
+        p_str("network interface has no IP address (DHCP in progress; check 'ifconfig')\n");
+        return false;
+    }
+    if (netif.dns == 0) {
+        p_str("no DNS server configured (try: dns <server-ip> or dhcp renew)\n");
+        return false;
+    }
     p_str("resolving "); p_str(s); p_str(" ... ");
-    int r = dns_resolve(s, ip, 6 * NET_HZ);
+    int r = dns_resolve(s, ip, 10 * NET_HZ);
     if (r == DNS_OK) { p_ip(*ip); p_str("\n"); return true; }
     switch (r) {
         case DNS_NXDOMAIN: p_str("no such host\n"); break;
@@ -158,6 +166,10 @@ static void cmd_arp(void) {
 }
 
 static void cmd_ping(const char* arg) {
+    if (netif.ip == 0) {
+        p_str("ping: interface has no IP address (check 'ifconfig')\n");
+        return;
+    }
     uint32_t ip;
     if (!resolve_host(arg, &ip)) return;
     p_str("PING "); p_ip(ip); p_str("\n");
@@ -216,7 +228,7 @@ static void cmd_client(const char* ip_s, const char* port_s, const char* request
     int s = tcp_socket();
     if (s < 0) { p_str("no free sockets\n"); return; }
 
-    int r = tcp_connect(s, ip, (uint16_t)port, 5 * NET_HZ);
+    int r = tcp_connect(s, ip, (uint16_t)port, 8 * NET_HZ);
     if (r != TCP_OK) {
         p_str("connect: "); p_str(tcp_err_str(r)); p_str("\n");
         tcp_close(s);
@@ -553,13 +565,13 @@ bool net_shell_command(const char* line) {
     }
 
     if (net_strcmp(argv[0], "http") == 0) {
-        if (argc < 2) { p_str("usage: http <ip> [port] [path]\n"); return true; }
+        if (argc < 2) { p_str("usage: http <host> [port] [path]\n"); return true; }
         const char* port = argc > 2 ? argv[2] : "80";
         const char* path = argc > 3 ? argv[3] : "/";
-        char req[128];
+        char req[256];
         int len = 0;
-        const char* parts[3] = { "GET ", path, " HTTP/1.0\r\nHost: osisos\r\nConnection: close\r\n\r\n" };
-        for (int i = 0; i < 3; i++)
+        const char* parts[5] = { "GET ", path, " HTTP/1.0\r\nHost: ", argv[1], "\r\nConnection: close\r\n\r\n" };
+        for (int i = 0; i < 5; i++)
             for (const char* p = parts[i]; *p && len < (int)sizeof(req) - 1; p++) req[len++] = *p;
         cmd_client(argv[1], port, req, len, true);
         return true;

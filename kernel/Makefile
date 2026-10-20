@@ -33,26 +33,27 @@ iso: osisos.iso
 drive.img:
 	qemu-img create -f qcow2 drive.img 10M
 
+# Default: Run OSISOS with user-mode network (DHCP 10.0.2.15, gateway 10.0.2.2, DNS 10.0.2.3)
+# and port forwards (Host 8080 -> OSISOS HTTP :80, Host 8007 -> Echo :7, Host 9999 -> Message :9999)
 run: osisos.iso drive.img
-	qemu-system-i386 -m 32M -cdrom osisos.iso -hda drive.img -netdev socket,id=n1,listen=127.0.0.1:1234 -device e1000,netdev=n1,mac=52:54:00:12:34:56
-
-# Single instance on QEMU's user-mode network (guest 10.0.2.15, gateway/host 10.0.2.2).
-# Host ports 8080 -> guest HTTP (80), 8007 -> guest echo (7):  curl http://127.0.0.1:8080/
-run-user: osisos.iso drive.img
 	qemu-system-i386 -m 32M -cdrom osisos.iso -hda drive.img \
-	  -netdev user,id=n0,hostfwd=tcp::8080-:80,hostfwd=tcp::8007-:7 \
+	  -netdev user,id=n0,hostfwd=tcp::8080-:80,hostfwd=tcp::8007-:7,hostfwd=tcp::9999-:9999 \
 	  -device e1000,netdev=n0,mac=52:54:00:12:34:56
 
-# Same, but boots osisos.bin directly (no GRUB / xorriso needed)
+# Direct kernel boot without GRUB/ISO step (faster development iteration)
 run-direct: osisos.bin
 	qemu-system-i386 -m 32M -kernel osisos.bin \
-	  -netdev user,id=n0,hostfwd=tcp::8080-:80,hostfwd=tcp::8007-:7 \
+	  -netdev user,id=n0,hostfwd=tcp::8080-:80,hostfwd=tcp::8007-:7,hostfwd=tcp::9999-:9999 \
 	  -device e1000,netdev=n0,mac=52:54:00:12:34:56
 
 drive2.img:
 	qemu-img create -f qcow2 drive2.img 10M
 
-run2: osisos.iso drive2.img
+# Peer-to-peer socket networking (for two VM raw Ethernet / legacy ping testing)
+run-socket: osisos.iso drive.img
+	qemu-system-i386 -m 32M -cdrom osisos.iso -hda drive.img -netdev socket,id=n1,listen=127.0.0.1:1234 -device e1000,netdev=n1,mac=52:54:00:12:34:56
+
+run-socket2: osisos.iso drive2.img
 	qemu-system-i386 -m 32M -cdrom osisos.iso -hda drive2.img -netdev socket,id=n1,connect=127.0.0.1:1234 -device e1000,netdev=n1,mac=52:54:00:12:34:57
 
 # Pattern rule to automatically compile any .c file into a .o file
@@ -81,5 +82,5 @@ osisos.iso: osisos.bin
 
 # Clean up all compiled files
 clean:
-	rm -f $(OBJS) $(OBJS:.o=.d) osisos.bin osisos.iso drive.img drive2.img
+	rm -f $(OBJS) $(OBJS:.o=.d) osisos.bin osisos.iso drive2.img
 	rm -rf isodir

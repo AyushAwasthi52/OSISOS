@@ -200,8 +200,15 @@ static void execute_command(char* cmd) {
         __asm__ volatile ("cli; hlt");
     } else if (strcmp(cmd, "shutdown") == 0) {
         terminal_print_string("Shutting down...\n");
+        // QEMU magic port
         outw(0x604, 0x2000);
+        // Bochs & older QEMU magic port
         outw(0xB004, 0x2000);
+        // VirtualBox ACPI magic port (often PM1a_CNT is at 0x4004)
+        outw(0x4004, 0x3400);
+
+        // If all emulator magic ports fail, halt the CPU completely.
+        terminal_print_string("It is now safe to turn off your computer.\n");
         __asm__ volatile ("cli; hlt");
     } else {
         terminal_print_string("Unknown command: ");
