@@ -25,6 +25,7 @@
 #include "kheap.h"
 #include "udp.h"
 #include "auth.h"
+#include "rcon.h"
 
 extern void terminal_print_string(const char* str);
 extern void terminal_putchar(char c);
@@ -500,6 +501,21 @@ bool net_shell_command(const char* line) {
 
     if (net_strcmp(argv[0], "ifconfig") == 0) { cmd_ifconfig(argc, argv); return true; }
     if (net_strcmp(argv[0], "arp") == 0)      { cmd_arp();                return true; }
+    if (net_strcmp(argv[0], "rcon") == 0) {
+        if (argc == 2 && net_strcmp(argv[1], "on") == 0) {
+            rcon_enable(true, true);
+            p_str("Remote console ENABLED on port 2323 (persists across reboots).\nWARNING: the protocol is unencrypted. Use it only on a trusted network.\n");
+            if (auth_has_default_password("admin")) p_str("Remote logins stay refused until you change the default password (passwd).\n");
+        } else if (argc == 2 && net_strcmp(argv[1], "off") == 0) {
+            rcon_enable(false, true);
+            p_str("Remote console disabled.\n");
+        } else if (argc != 1) { p_str("usage: rcon [on|off]\n"); return true; }
+        rcon_status_t st; rcon_get_status(&st);
+        p_str("rcon: "); p_str(st.enabled ? "enabled (port 2323)" : "disabled");
+        if (st.session_active) { p_str(", session from "); p_ip(st.peer_ip); p_str(" as "); p_str(st.user); p_str(", idle "); p_dec(st.idle_secs); p_str(" s"); }
+        p_str("\n");
+        return true;
+    }
     if (net_strcmp(argv[0], "selftest") == 0) { cmd_selftest(); return true; }
     if (net_strcmp(argv[0], "httpd") == 0) { cmd_httpd(argc, argv); return true; }
     if (net_strcmp(argv[0], "fetch") == 0) {

@@ -52,7 +52,12 @@ void terminal_scroll(void) {
 }
 
 /* Prints a single character and advances the cursor */
+/* When set, terminal output is diverted to this function instead of the VGA screen
+ * (used by the remote console to capture a command's output). */
+void (*terminal_sink)(char c) = 0;
+
 void terminal_putchar(char c) {
+    if (terminal_sink) { terminal_sink(c); return; }
     if (c == '\n') {
         terminal_col = 0;
         terminal_row++;

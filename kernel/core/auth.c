@@ -21,8 +21,8 @@ typedef struct {
 
 static user_t   users[MAX_USERS];
 static bool     persistent;
-static uint32_t fails;
-static uint32_t locked_until;              /* tick */
+static uint32_t fails_ch[2];
+static uint32_t locked_until_ch[2];         /* tick, per channel */
 
 /* ------------------------------------------------------------------ */
 /* helpers                                                             */
@@ -176,7 +176,16 @@ static void safe_name(const char* in, char* out) {                    /* for log
 }
 
 auth_result_t auth_verify(const char* user, const char* password, uint32_t* wait_secs) {
+    return auth_verify_ch(AUTH_CH_CONSOLE, user, password, wait_secs);
+}
+
+auth_result_t auth_verify_ch(int channel, const char* user, const char* password, uint32_t* wait_secs) {
+    if (channel < 0 || channel > 1) channel = 1;
+    uint32_t* fails = &fails_ch[channel];
+    uint32_t* locked_until_p = &locked_until_ch[channel];
+    const char* chname = channel == AUTH_CH_CONSOLE ? "console" : "remote";
     uint32_t now = *(volatile uint32_t*)&tick;
+#define locked_until (*locked_until_p)
     if (locked_until && (int32_t)(now - locked_until) < 0) {
         if (wait_secs) *wait_secs = (locked_until - now) / 100 + 1;
         return AUTH_LOCKED;
@@ -197,23 +206,24 @@ auth_result_t auth_verify(const char* user, const char* password, uint32_t* wait
     char nm[17];
     safe_name(user, nm);
     if (ok) {
-        fails = 0;
+        *fails = 0;
         locked_until = 0;
-        klog("auth: login ok for '%s'", nm);
+        klog("auth: login ok for '%s' (%s)", nm, chname);
         return AUTH_OK;
     }
 
-    fails++;
-    if (fails >= 3) {
-        uint32_t secs = 5u << (fails - 3 > 6 ? 6 : fails - 3);          /* 5, 10, 20, ... */
+    (*fails)++;
+    if (*fails >= 3) {
+        uint32_t secs = 5u << (*fails - 3 > 6 ? 6 : *fails - 3);          /* 5, 10, 20, ... */
         if (secs > 300) secs = 300;
         locked_until = now + secs * 100;
         if (wait_secs) *wait_secs = secs;
-        klog("auth: FAILED login #%u for '%s' - locked for %u s", fails, nm, secs);
+        klog("auth: FAILED login #%u for '%s' (%s) - locked for %u s", *fails, nm, chname, secs);
     } else {
-        klog("auth: FAILED login #%u for '%s'", fails, nm);
+        klog("auth: FAILED login #%u for '%s' (%s)", *fails, nm, chname);
     }
     return AUTH_BAD;
+#undef locked_until
 }
 
 bool auth_set_password(const char* user, const char* new_password, bool* persisted) {

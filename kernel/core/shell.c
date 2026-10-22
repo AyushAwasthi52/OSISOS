@@ -23,6 +23,7 @@ static int strcmp(const char* s1, const char* s2) {
 #include "io.h"
 #include "net.h"
 #include "auth.h"
+#include "rcon.h"
 
 extern void send_ping_packet(void);
 extern void terminal_print_dec(uint32_t val);
@@ -81,6 +82,7 @@ static void execute_command(char* cmd) {
         terminal_print_string("  sysinfo, dmesg, selftest - system info, kernel log, self-check\n");
         terminal_print_string("  fortune, cowsay, snake, matrix, sl - fun (there may be secrets)\n");
         terminal_print_string("  passwd        - change your password\n");
+        terminal_print_string("  rcon [on|off] - remote console on port 2323 (unencrypted!)\n");
         terminal_print_string("  crash <kind>  - DEBUG: fault the kernel to see the panic screen\n");
         terminal_print_string("  ping          - Send a raw ethernet test packet\n");
         terminal_print_string("  ping <host>   - ICMP echo (host = IP or DNS name)\n");
@@ -349,6 +351,16 @@ void shell_main(void) {
             }
         }
         
+        // A command typed into the remote console? Run it here (this task can block, e.g. ping/fetch)
+        {
+            char rline[RCON_LINE_MAX + 1];
+            if (rcon_take_command(rline, sizeof(rline))) {
+                rcon_exec_begin();
+                execute_command(rline);
+                rcon_exec_end();
+            }
+        }
+
         // Very slight delay
         for (volatile int d = 0; d < 10000; d++);
     }
