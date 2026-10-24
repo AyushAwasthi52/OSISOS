@@ -1,5 +1,8 @@
 #include "auth.h"
 #include "sha256.h"
+#include "rng.h"
+#include "x25519.h"
+#include "chacha20poly1305.h"
 #include "klog.h"
 #include "ofs.h"
 #include <stddef.h>
@@ -44,21 +47,8 @@ static bool ct_equal(const uint8_t* a, const uint8_t* b, size_t n) {
 
 static void wipe(void* p, size_t n) { volatile uint8_t* v = (volatile uint8_t*)p; while (n--) *v++ = 0; }
 
-static uint8_t pool[32];
-
-/* Salts only need to be unique, not secret. Mix whatever entropy a bare VM offers. */
-static void random_bytes(uint8_t* out, size_t n) {
-    uint32_t lo, hi;
-    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
-    uint32_t t = *(volatile uint32_t*)&tick;
-    sha256_ctx c;
-    sha256_init(&c);
-    sha256_update(&c, pool, sizeof(pool));
-    sha256_update(&c, &lo, 4); sha256_update(&c, &hi, 4); sha256_update(&c, &t, 4);
-    sha256_update(&c, &c, 16);                            /* stack address / layout */
-    sha256_final(&c, pool);
-    for (size_t i = 0; i < n; i++) out[i] = pool[i % 32];
-}
+/* Salts only need to be unique, but use the shared pool (keystroke + packet timing) anyway. */
+static void random_bytes(uint8_t* out, size_t n) { rng_bytes(out, n); }
 
 static void hex_encode(const uint8_t* in, size_t n, char* out) {
     static const char* d = "0123456789abcdef";
@@ -260,5 +250,20 @@ bool auth_selftest(void) {
     sha256("abc", 3, out);
     if (!ct_equal(out, abc, 32)) return false;
     pbkdf2_hmac_sha256("password", 8, "salt", 4, 1, out);
-    return ct_equal(out, pb1, 32);
+    if (!ct_equal(out, pb1, 32)) return false;
+
+    /* X25519: RFC 7748 section 5.2, first test vector */
+    static const uint8_t xk[32] = { 0xa5,0x46,0xe3,0x6b,0xf0,0x52,0x7c,0x9d,0x3b,0x16,0x15,0x4b,0x82,0x46,0x5e,0xdd,0x62,0x14,0x4c,0x0a,0xc1,0xfc,0x5a,0x18,0x50,0x6a,0x22,0x44,0xba,0x44,0x9a,0xc4 };
+    static const uint8_t xu[32] = { 0xe6,0xdb,0x68,0x67,0x58,0x30,0x30,0xdb,0x35,0x94,0xc1,0xa4,0x24,0xb1,0x5f,0x7c,0x72,0x66,0x24,0xec,0x26,0xb3,0x35,0x3b,0x10,0xa9,0x03,0xa6,0xd0,0xab,0x1c,0x4c };
+    static const uint8_t xe[32] = { 0xc3,0xda,0x55,0x37,0x9d,0xe9,0xc6,0x90,0x8e,0x94,0xea,0x4d,0xf2,0x8d,0x08,0x4f,0x32,0xec,0xcf,0x03,0x49,0x1c,0x71,0xf7,0x54,0xb4,0x07,0x55,0x77,0xa2,0x85,0x52 };
+    x25519(out, xk, xu);
+    if (!ct_equal(out, xe, 32)) return false;
+
+    /* ChaCha20-Poly1305: vector generated with Python's `cryptography` (key 00..1f, nonce counter 1) */
+    static const uint8_t ak[32] = { 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 };
+    static const uint8_t aexp[13 + 16] = { 0xf7, 0x32, 0x9f, 0x33, 0xda, 0x06, 0x8f, 0x73, 0x4c, 0xc4, 0xc0, 0x39, 0x3e, 0xc2, 0xeb, 0x3f, 0xcb, 0x3c, 0xee, 0x10, 0x1e, 0xdc, 0x70, 0x1b, 0xcb, 0xa0, 0x7e, 0x64, 0x4b };
+    uint8_t enc[13 + 16], dec[13];
+    aead_encrypt(ak, 1, (const uint8_t*)"osisos", 6, (const uint8_t*)"hello, kernel", 13, enc);
+    if (!ct_equal(enc, aexp, sizeof(enc))) return false;
+    return aead_decrypt(ak, 1, (const uint8_t*)"osisos", 6, aexp, 13, dec) && ct_equal(dec, (const uint8_t*)"hello, kernel", 13);
 }

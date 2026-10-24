@@ -103,9 +103,25 @@ buffer has room for, so slow clients never block others. Extra clients wait in t
 
 30-second idle timeout. An access log (last 16) is kept and every request is written to the kernel log.
 
-## 9. Remote console
+## 9. Remote console (`rcon.c`)
 
-See [USER_GUIDE.md](USER_GUIDE.md#5-remote-administration) and [SECURITY.md](SECURITY.md). Implementation: `net/rcon.c`.
+Two listeners, one shared session slot. **Port 2324 is encrypted**; port 2323 is the legacy plaintext mode.
+
+Encrypted framing and protocol: `Noise_NK_25519_ChaChaPoly_SHA256` (prologue `OSISOS-RCON-1`). Every message on the TCP stream is
+`2-byte big-endian length | body`, bodies at most 700 bytes.
+
+```
+client                                                    server (static key s, pinned by the client)
+  -> 48 B: e, es                                            handshake message 1   (ephemeral key + AEAD tag)
+  <- 48 B: e, ee                                            handshake message 2
+  == transport: ChaCha20-Poly1305, 64-bit counter nonces, one key per direction (forward secret) ==
+  <- "login: "  -> user  <- "password: "  -> password       (text, but inside encrypted messages)
+```
+
+The network task runs the handshake (3 X25519 operations, about 0.1 s) and the framing; decrypted bytes feed the same line editor as the
+plaintext mode. Any invalid length, failed decryption (forgery, corruption, replay: the nonce counter only advances on success) or
+10-second handshake stall closes the connection. Commands execute in the shell task, with output encrypted back (`send_secure`).
+Crypto code: `core/x25519.c`, `chacha20poly1305.c`, `noise.c`, `sha256.c`, `rng.c`. Key management: `/etc/rcon.key` (see [SECURITY.md](SECURITY.md)).
 
 ## 10. Packet walk-through: `http 10.0.2.2 8000 /`
 

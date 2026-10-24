@@ -2,7 +2,7 @@
 
 The kernel is tested end to end: a Python harness boots it in QEMU, types into the console through the QEMU monitor, reads
 the VGA screen back, and talks to the guest over the network from the host through forwarded ports. Today the suite has
-**137 checks** and runs in roughly half an hour.
+**167 checks** and runs in roughly half an hour.
 
 ## Running
 
@@ -14,7 +14,8 @@ cd kernel && make osisos.bin
 python3 ../tools/nettest.py            # prints PASS/FAIL per check and a summary; exit status 1 on any failure
 ```
 
-Host ports used: 18000 (test HTTP server), 18007 (echo), 18008 (UDP echo), 18023 (remote console), 18080 (guest HTTP), 15555, 53 (fake DNS).
+Python packages: `pip install cryptography noiseprotocol` (the encrypted-console tests use the independent Noise client).
+Host ports used: 18000 (test HTTP server), 18007 (echo), 18008 (UDP echo), 18023 / 18024 (plain / encrypted console), 18080 (guest HTTP), 15555, 53 (fake DNS).
 Temporary files: `/tmp/osisos-*.img`, `/tmp/osisos-mon.sock`, `/tmp/osisos.pcap`.
 
 ## How the harness works
@@ -44,11 +45,15 @@ Temporary files: `/tmp/osisos-*.img`, `/tmp/osisos-mon.sock`, `/tmp/osisos.pcap`
 | Filesystem | fetch into subdirectories, mv/rm/rmdir, space reuse without overlap, persistence across reboot, **v1 -> v2 migration** |
 | Crash handling | every `crash` kind: decoded cause + registers + log; R reboots, H halts, automatic reboot after 15 s; web server **and disk intact** afterwards |
 | Auth | PBKDF2 hash on disk recomputed in Python, wrong/unknown user, 70-char inputs, lockout, `passwd` (wrong/short/mismatch/ok/masked), persistence |
-| Remote console | disabled by default, default-password refusal, separate lockout, CRLF output, long output, denied commands, busy session, pipelined commands, telnet negotiation, off/on persistence |
+| Remote console (plaintext) | disabled by default, default-password refusal, separate lockout, CRLF output, long output, denied commands, busy session, pipelined commands, telnet negotiation, off/on persistence |
+| **Encrypted console** | handshake with an independent client, **no plaintext on the wire**, replay / flipped-bit / garbage / absurd-length / wrong-pinned-key / plaintext-probe / slow-loris attacks all rejected, 3-strikes, single session, pipelining, the shipped `osisos_ssh.py` client, key persistence across reboot, `rcon newkey` rotation, `rcon off` |
 | Self-check | `selftest` passes (also after a crash/reboot cycle) |
 | Fun | `snake` plays until it hits the wall, `matrix` animates and restores the screen, `sl`, easter eggs, `rm -rf /` deletes nothing |
 
-Cryptography is additionally verified natively against Python `hashlib` (see `docs/SECURITY.md`).
+**Cryptography** is verified separately and natively (no QEMU, about 30 s): `python3 tools/crypto_verify.py` compiles the kernel's own
+`core/*.c` crypto sources and compares them with Python `hashlib`/`hmac`, `pyca/cryptography` (X25519 incl. the RFC 7748 vector, ChaCha20-Poly1305,
+tamper rejection) and the `noiseprotocol` library acting as the *client* of our C server (random keys, prologues, 30 messages each way,
+replay, tamper, wrong key, truncation, low-order key). It needs `pip install cryptography noiseprotocol` and `gcc`.
 
 ## Writing a new test
 

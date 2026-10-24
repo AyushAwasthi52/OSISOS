@@ -5,36 +5,45 @@
 #include <stdbool.h>
 
 /*
- * OSISOS remote console ("rcon"): a password-protected shell over plain TCP, port 2323.
- * Works with `nc <ip> 2323` and with a telnet client.
+ * OSISOS remote console ("rcon"): a password-protected shell over TCP.
  *
- *   *** The protocol is UNENCRYPTED. Use it only on a network you trust. ***
+ *   port 2324  SECURE   Noise_NK_25519_ChaChaPoly_SHA256: encrypted + server-authenticated.
+ *                       Use tools/osisos_ssh.py (or any Noise NK client). `rcon on` enables it.
+ *   port 2323  PLAIN    unencrypted telnet-style text (nc / telnet). Legacy; `rcon plain on`.
  *
- * Safe defaults: disabled until an administrator runs `rcon on` at the console; remote logins are
- * refused while the account still has the default password; one session at a time; its own
- * login-throttle counters (network guessing cannot lock the local console); 5 minute idle timeout;
- * every login, failure and command is written to the kernel log (`dmesg`).
+ * Safe defaults: BOTH are disabled until an administrator enables them at the console; remote logins are
+ * refused while the account still has the default password; one session at a time; its own login-throttle
+ * counters (network guessing cannot lock the local console); idle timeout; every login, failure and command
+ * is written to the kernel log (`dmesg`).
  *
- * Execution model: the network task handles sockets and line editing; commands run in the SHELL task
- * (so blocking commands such as ping/fetch work), with their output redirected into the session.
+ * Execution model: the network task handles sockets, the handshake and line editing; commands run in the
+ * SHELL task (so blocking commands such as ping/fetch work), with their output redirected into the session.
  */
 
-#define RCON_PORT        2323
-#define RCON_LINE_MAX    200
-#define RCON_IDLE_TICKS  (300 * 100)
+#define RCON_PORT          2323          /* plaintext */
+#define RCON_SECURE_PORT   2324          /* Noise */
+#define RCON_LINE_MAX      200
+#define RCON_IDLE_TICKS    (300 * 100)
+#define RCON_PROLOGUE      "OSISOS-RCON-1"
 
-void rcon_init(void);                                  /* read /etc/rcon, start listening if enabled */
-void rcon_poll(void);                                  /* network task: accept, read, prompt */
-void rcon_enable(bool on, bool persist);
+#define RCON_PLAIN   0
+#define RCON_SECURE  1
+
+void rcon_init(void);                                  /* read the /etc flags, start listeners that were enabled */
+void rcon_poll(void);                                  /* network task: accept, handshake, read, prompt */
+void rcon_set(int mode, bool on, bool persist);
+bool rcon_new_key(void);                               /* replace the server identity (clients must re-pin) */
+bool rcon_get_pubkey(uint8_t out[32]);                 /* false if no key exists yet */
+bool rcon_key_persistent(void);
 
 /* shell task side */
-bool rcon_take_command(char* out, int max);            /* a command is waiting? */
-void rcon_exec_begin(void);                            /* start capturing terminal output */
-void rcon_exec_end(void);                              /* flush, stop capturing, prompt again */
+bool rcon_take_command(char* out, int max);
+void rcon_exec_begin(void);
+void rcon_exec_end(void);
 
 typedef struct {
-    bool     enabled;
-    bool     session_active;
+    bool     plain_enabled, secure_enabled;
+    bool     session_active, session_secure;
     uint32_t peer_ip;
     char     user[24];
     uint32_t idle_secs;

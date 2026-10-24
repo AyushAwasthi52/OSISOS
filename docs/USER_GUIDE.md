@@ -68,7 +68,9 @@ Paths may be absolute (`/www/a.html`) or relative to the current directory; `.` 
 | `http <host> [port] [path]` | minimal HTTP/1.0 GET |
 | `netdrop <0-90>` | randomly drop that percentage of IP frames (rx+tx) to watch TCP retransmit |
 | `httpd`, `httpd root <dir>` | web server status, last 8 requests, document root (runtime only) |
-| `rcon`, `rcon on`, `rcon off` | remote console status / enable (persistent) / disable |
+| `rcon`, `rcon on`, `rcon off` | **encrypted** remote console (port 2324): status / enable (persistent) / disable |
+| `rcon key`, `rcon newkey` | show the server public key + fingerprint / rotate the identity (clients must re-pin) |
+| `rcon plain on`, `rcon plain off` | legacy **unencrypted** console on port 2323 |
 
 ### Fun and debug
 
@@ -82,7 +84,8 @@ Paths may be absolute (`/www/a.html`) or relative to the current directory; `.` 
 |---|---|---|
 | 7 | TCP, UDP | echo |
 | 80 | TCP | HTTP file server (documents from `/www`) |
-| 2323 | TCP | remote console (**off by default**) |
+| 2324 | TCP | **encrypted** remote console (Noise NK; **off by default**) |
+| 2323 | TCP | legacy plaintext remote console (**off by default**) |
 | 68 | UDP | DHCP client |
 
 ## 4. Publishing a website
@@ -102,29 +105,39 @@ statistics; content types come from the extension; with no `/www` a built-in wel
 
 ## 5. Remote administration
 
-The remote console gives you the same shell over the network.
+The remote console gives you the same shell over the network, **encrypted and authenticated**.
 
-1. At the **local console**: run `passwd` (remote logins are refused while the default password is set), then
-   `rcon on`. The setting persists across reboots.
-2. From another machine: `nc <ip> 2323` (or `telnet <ip> 2323`), then log in as `admin`.
-3. Use commands normally; `exit` disconnects. Scripting works: `printf 'df\nifconfig\nexit\n' | nc <ip> 2323`
-   (after login lines: `printf 'admin\nPASSWORD\ndf\nexit\n' | nc ...`).
+1. At the **local console**: run `passwd` (remote logins are refused while the default password is set), then `rcon on`. It prints the
+   server's **public key** (64 hex characters); `rcon key` shows it again with its SHA-256 fingerprint. The setting persists.
+2. On your computer: `pip install noiseprotocol`, then
+   ```sh
+   python3 tools/osisos_ssh.py <ip> --server-key <the 64 hex characters>
+   python3 tools/osisos_ssh.py <ip> --server-key <key> -c "df" -c "ifconfig"      # run commands, print output, exit
+   OSISOS_PASSWORD=... python3 tools/osisos_ssh.py <ip> --server-key <key> -c dmesg   # no password prompt
+   ```
+3. Log in as `admin` (the password is typed inside the encrypted channel); `exit` disconnects.
 
-Things to know:
+How it protects you: the client **pins the server key**, so a man-in-the-middle cannot impersonate your machine (the handshake simply
+fails: *"wrong server key, or not an OSISOS secure console"*); everything after the handshake is encrypted and integrity-protected with
+forward-secret keys; forged, corrupted or replayed messages drop the session. **Always take the key from the console itself** (not from
+the network). After `rcon newkey` every client must pin the new key.
 
-* **The connection is not encrypted.** Use it only on networks you trust (see [SECURITY.md](SECURITY.md)).
-* One session at a time; 5-minute idle timeout; 3 wrong passwords drop the connection and start a lockout that is
-  *separate* from the local console's.
-* Commands that need the screen or keyboard (`snake`, `matrix`, `sl`, `edit`, `passwd`, `clear`, `crash`) are refused remotely.
-* Commands run on the console's shell task, so a long command (e.g. `fetch`) also occupies the local console.
-* Every login, failure and command is recorded in `dmesg`.
+Behaviour shared by both modes: one session at a time (others are refused); 5-minute idle timeout (10 s to finish the handshake);
+3 wrong passwords drop the connection and start a lockout that is *separate* from the local console's; commands that need the screen or
+keyboard (`snake`, `matrix`, `sl`, `edit`, `passwd`, `clear`, `crash`) are refused remotely; commands run on the console's shell task, so a
+long command (e.g. `fetch`) also occupies the local console; every login, failure and command is recorded in `dmesg`.
+
+**Legacy plaintext mode** (`rcon plain on`, port 2323) works with `nc <ip> 2323` / `telnet <ip> 2323`, e.g.
+`printf 'admin\nPASSWORD\ndf\nexit\n' | nc <ip> 2323`. **It is not encrypted**: use it only on a network you trust (see [SECURITY.md](SECURITY.md)).
 
 ## 6. Configuration and persistence
 
 | Setting | Where | Persists? |
 |---|---|---|
 | Password hash | `/etc/shadow` | yes |
-| Remote console on/off | `/etc/rcon` (present = on) | yes |
+| Encrypted console on/off | `/etc/rcon.secure` (present = on) | yes |
+| Console identity key | `/etc/rcon.key` (private key, hex) | yes |
+| Plaintext console on/off | `/etc/rcon` (present = on) | yes |
 | IP address | DHCP, or `ifconfig` | no (DHCP re-runs each boot; static is lost) |
 | DNS server | DHCP, or `dns <ip>` | no |
 | Web document root | `httpd root <dir>` | no (default `/www`) |
@@ -142,7 +155,8 @@ the image) and the default `admin`/`osisos` account is created again at the next
 | Web page does not load | `httpd` (document root exists? requests counted?), `netstat` (is port 80 LISTEN?), QEMU port forward flags |
 | `fetch` says "did not answer 200 OK" | wrong URL path / the server is not reachable from the guest (host = `10.0.2.2` in QEMU user networking) |
 | Remote console: "Remote login is disabled until the default password is changed" | run `passwd` at the local console |
-| Remote console: connection closes immediately | `rcon` at the console: is it enabled? |
+| Remote console: connection closes immediately | `rcon` at the console: is that mode enabled? Is another session open? |
+| Client: "handshake failed: wrong server key" | you pinned the wrong key (or the console is not an OSISOS secure console). Re-read it with `rcon key` on the console; it changes after `rcon newkey` |
 | "Too many failed attempts. Try again in N s." | wait; lockouts double (5 s, 10 s ... max 5 min) |
 | Kernel panic screen | note the cause and EIP; `R` reboots; see the developer guide |
 | `qemu -kernel` refuses to boot | rebuild with the current Makefile (`--build-id=none` keeps the Multiboot header in the first 8 KB) |

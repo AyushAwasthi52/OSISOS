@@ -23,12 +23,12 @@ IPv4/TCP/UDP/DHCP/DNS/HTTP, serves web pages from its own filesystem, and can be
 | **Kernel** | GDT/IDT, PIC/PIT, paging (32 MB identity map, NULL-page guard), page-frame allocator, 1 MB kernel heap, preemptive round-robin scheduler, ring-3 demo, full CPU-exception handling with a **kernel panic screen** and auto-reboot |
 | **Drivers** | VGA text console, PS/2 keyboard, PIT, CMOS RTC, ATA PIO disk (locked + bounded), PCI, **Intel e1000** NIC |
 | **Network** | Ethernet, **ARP**, **IPv4** (+loopback), **ICMP**, **UDP**, **TCP** (full state machine, retransmission, flow control), **DHCP** client with lease renewal, **DNS** resolver with cache |
-| **Servers** | **HTTP/1.1 static file server** (streams from disk), TCP/UDP echo, **remote admin console** (opt-in, password-protected) |
+| **Servers** | **HTTP/1.1 static file server** (streams from disk), TCP/UDP echo, **encrypted remote admin console** (Noise NK: X25519 + ChaCha20-Poly1305; opt-in, password-protected, with a Python client) |
 | **Storage** | **OFS v2**: 128 inodes, contiguous extents, delete/rename, space reuse, automatic v1 -> v2 migration |
-| **Security** | PBKDF2-HMAC-SHA256 password hashes, login throttling, audit log, `/etc` never served, safe-by-default remote access |
+| **Security** | PBKDF2-HMAC-SHA256 password hashes, login throttling, audit log, `/etc` never served, safe-by-default remote access, **from-scratch crypto verified against independent implementations** |
 | **Operations** | `dmesg` kernel log, `sysinfo`, `selftest`, `netstat`, packet-loss injection, crash screen |
 | **Fun** | `snake`, `matrix`, `sl`, `fortune`, `cowsay`, easter eggs |
-| **Quality** | An end-to-end test suite (QEMU + a Python harness) with 130+ checks |
+| **Quality** | An end-to-end test suite (QEMU + a Python harness) with 160+ checks |
 
 ## Quick start
 

@@ -79,7 +79,7 @@ else (leases, ARP cache, sockets, kernel log) is rebuilt at boot.
 | Dir | Files |
 |---|---|
 | `arch/i386` | boot.S, exceptions.S (87), gdt, idt, pic, switch.S, usermode.S, paging_flush.S, io.h |
-| `core` | kernel.c (317), shell.c (367), extras.c (410), panic.c (216), auth.c (264), sha256.c (102), klog.c (79), task.c (139), editor.c, syscall.c |
+| `core` | kernel.c, shell.c, extras.c, panic.c, auth.c, **sha256.c, x25519.c, chacha20poly1305.c, noise.c, rng.c** (crypto), klog.c, task.c, editor.c, syscall.c |
 | `drivers` | e1000.c (164), ide.c (147), keyboard.c, pci.c, rtc.c, timer.c |
 | `mm` | pmm.c, paging.c, kheap.c |
 | `fs` | ofs.c (562), fscmd.c (87) |

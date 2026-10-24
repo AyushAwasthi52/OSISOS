@@ -78,10 +78,19 @@ Names: `dns_resolve("example.com", &ip, 6*NET_HZ)`. UDP: `udp_socket / udp_sendt
 | Log an event | `klog("dhcp: bound %I", ip);` (`%s %d %u %I %%`) -> `dmesg` |
 | Files | `ofs_put`, `ofs_lookup`, `ofs_stat`, `ofs_inode_read`, `ofs_remove`, `ofs_rename` (see [FILESYSTEM.md](FILESYSTEM.md)) |
 | Passwords | `auth_verify_ch(channel, user, pass, &wait)`, `auth_set_password`, `auth_has_default_password` |
+| Random bytes | `rng_bytes(buf, n)`; call `rng_event(x)` from new input/packet paths to feed the pool |
+| Crypto | `sha256/hmac_sha256/pbkdf2_hmac_sha256`, `x25519/x25519_base`, `aead_encrypt/aead_decrypt` (ChaCha20-Poly1305), Noise NK responder `noise_resp_*` / `noise_encrypt/decrypt` |
 | Time | `net_now()` (ticks, 100/s); `seconds_passed` |
 | Memory | `kmalloc/kfree` (1 MB heap: do not use in per-packet paths); prefer static buffers |
 | Fatal error | `kpanic("message")` |
 | Remote output capture | print via `terminal_print_*`; `terminal_sink` redirects while a remote command runs |
+
+### Cryptography code
+
+Do not write new crypto casually. If you change anything in `kernel/core/{sha256,x25519,chacha20poly1305,noise}.c`, re-run
+`python3 tools/crypto_verify.py` (compiles the *same* files natively and compares them with Python `hashlib`, `pyca/cryptography` and the
+`noiseprotocol` library, 1682 checks). The X25519 routine uses static scratch space (not re-entrant) and must only be called from one task
+(the network task). Secrets are wiped after use (`volatile` stores, so the compiler cannot delete them).
 
 ## 6. Rules of the road
 
