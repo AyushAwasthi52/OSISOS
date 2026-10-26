@@ -13,6 +13,7 @@
 #include "udp.h"
 #include "dhcp.h"
 #include "httpd.h"
+#include "rcon.h"
 
 #define SVC_ECHO_PORT   7
 #define SVC_MAX_CONN    3
@@ -37,6 +38,7 @@ void net_services_init(void) {
     if (udp_echo_sock >= 0 && udp_bind(udp_echo_sock, SVC_ECHO_PORT) != 0) udp_echo_sock = -1;
 
     httpd_init();
+    rcon_init();
 }
 
 static void echo_accept(void) {
@@ -92,4 +94,5 @@ void net_services_poll(void) {
     for (int i = 0; i < SVC_MAX_CONN; i++)
         if (echo_conns[i].sock >= 0) echo_serve(&echo_conns[i]);
     httpd_poll();
+    rcon_poll();
 }

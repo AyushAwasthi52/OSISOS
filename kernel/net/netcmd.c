@@ -25,6 +25,8 @@
 #include "kheap.h"
 #include "udp.h"
 #include "auth.h"
+#include "rcon.h"
+#include "sha256.h"
 
 extern void terminal_print_string(const char* str);
 extern void terminal_putchar(char c);
@@ -57,6 +59,11 @@ static void p_mac(const uint8_t* m) {
         terminal_putchar(hex[m[i] & 15]);
         if (i < 5) terminal_putchar(':');
     }
+}
+
+static void p_hex(const uint8_t* b, int n) {
+    const char* hex = "0123456789abcdef";
+    for (int i = 0; i < n; i++) { terminal_putchar(hex[b[i] >> 4]); terminal_putchar(hex[b[i] & 15]); }
 }
 
 static void pad(int printed, int width) { while (printed++ < width) terminal_putchar(' '); }
@@ -468,7 +475,7 @@ static void cmd_selftest(void) {
         p_str("  [ -- ] no disk: filesystem checks skipped\n");
     }
 
-    st_report("crypto: SHA-256 and PBKDF2 known answers", auth_selftest(), "");
+    st_report("crypto: SHA-256, PBKDF2, X25519, ChaCha20-Poly1305 known answers", auth_selftest(), "");
 
     /* heap */
     {
@@ -500,6 +507,46 @@ bool net_shell_command(const char* line) {
 
     if (net_strcmp(argv[0], "ifconfig") == 0) { cmd_ifconfig(argc, argv); return true; }
     if (net_strcmp(argv[0], "arp") == 0)      { cmd_arp();                return true; }
+    if (net_strcmp(argv[0], "rcon") == 0) {
+        rcon_status_t st;
+        bool show = true;
+        if (argc == 2 && net_strcmp(argv[1], "on") == 0) {
+            rcon_set(RCON_SECURE, true, true);
+            uint8_t pub[32];
+            p_str("Secure remote console ENABLED on port 2324 (persists across reboots).\nServer public key - give it to your clients so they can pin it:\n");
+            if (rcon_get_pubkey(pub)) { p_hex(pub, 32); p_str("\n"); }
+            if (!rcon_key_persistent()) p_str("WARNING: the key could not be saved (no disk): it changes at every reboot.\n");
+            p_str("Connect with:  python3 tools/osisos_ssh.py <this-ip> --server-key <key above>\n");
+            if (auth_has_default_password("admin")) p_str("Remote logins stay refused until you change the default password (passwd).\n");
+        } else if (argc == 2 && net_strcmp(argv[1], "off") == 0) {
+            rcon_set(RCON_SECURE, false, true);
+        } else if (argc == 3 && net_strcmp(argv[1], "plain") == 0 && net_strcmp(argv[2], "on") == 0) {
+            rcon_set(RCON_PLAIN, true, true);
+            p_str("PLAINTEXT remote console ENABLED on port 2323.\nWARNING: passwords and commands are sent UNENCRYPTED. Prefer 'rcon on' (encrypted).\n");
+            if (auth_has_default_password("admin")) p_str("Remote logins stay refused until you change the default password (passwd).\n");
+        } else if (argc == 3 && net_strcmp(argv[1], "plain") == 0 && net_strcmp(argv[2], "off") == 0) {
+            rcon_set(RCON_PLAIN, false, true);
+        } else if (argc == 2 && net_strcmp(argv[1], "key") == 0) {
+            uint8_t pub[32], fp[32];
+            if (!rcon_get_pubkey(pub)) p_str("No server key yet: run 'rcon on' first.\n");
+            else {
+                sha256(pub, 32, fp);
+                p_str("Server public key (pin this in clients):\n"); p_hex(pub, 32);
+                p_str("\nFingerprint (SHA-256 of the key):\n"); p_hex(fp, 32); p_str("\n");
+            }
+            show = false;
+        } else if (argc == 2 && net_strcmp(argv[1], "newkey") == 0) {
+            rcon_new_key();
+            p_str("New server identity created. Clients must pin the new key ('rcon key').\n");
+        } else if (argc != 1) { p_str("usage: rcon [on|off|key|newkey|plain on|plain off]\n"); return true; }
+        if (show) {
+            rcon_get_status(&st);
+            p_str("rcon secure (port 2324, encrypted):    "); p_str(st.secure_enabled ? "enabled\n" : "disabled\n");
+            p_str("rcon plain  (port 2323, UNENCRYPTED):  "); p_str(st.plain_enabled ? "enabled\n" : "disabled\n");
+            if (st.session_active) { p_str("session: "); p_ip(st.peer_ip); p_str(" as "); p_str(st.user[0] ? st.user : "(logging in)"); p_str(st.session_secure ? ", encrypted" : ", PLAINTEXT"); p_str(", idle "); p_dec(st.idle_secs); p_str(" s\n"); }
+        }
+        return true;
+    }
     if (net_strcmp(argv[0], "selftest") == 0) { cmd_selftest(); return true; }
     if (net_strcmp(argv[0], "httpd") == 0) { cmd_httpd(argc, argv); return true; }
     if (net_strcmp(argv[0], "fetch") == 0) {

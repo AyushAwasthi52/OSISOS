@@ -12,6 +12,7 @@
 #include "tcp.h"
 #include "udp.h"
 #include "dhcp.h"
+#include "rng.h"
 #include "e1000.h"
 #include "pci.h"
 
@@ -423,6 +424,7 @@ static void net_rx_frame(const uint8_t* f, uint16_t len) {
         return;
     }
     net_stats.rx_frames++;
+    rng_event(len);                                  /* arrival-time jitter feeds the entropy pool */
 
     switch (ntohs(e->type)) {
         case ETH_TYPE_ARP:  arp_input(f + ETH_HLEN, len - ETH_HLEN); break;

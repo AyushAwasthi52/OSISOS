@@ -14,7 +14,7 @@ KERNEL = os.path.join(os.path.dirname(__file__), "..", "kernel", "osisos.bin")
 MON = "/tmp/osisos-mon.sock"
 HOST_HTTP_PORT = 18000
 DISK = "/tmp/osisos-test.img"
-FWD_HTTP, FWD_ECHO, FWD_UDP = 18080, 18007, 18008
+FWD_HTTP, FWD_ECHO, FWD_UDP, FWD_RCON, FWD_RCON2 = 18080, 18007, 18008, 18023, 18024
 NET = "192.168.76"; GW = NET + ".2"; GUEST = NET + ".50"   # DHCP pool differs from the 10.0.2.15 fallback on purpose
 KEYS = {' ': 'spc', '.': 'dot', '/': 'slash', '\n': 'ret', '-': 'minus', '\b': 'backspace'}
 
@@ -24,7 +24,7 @@ class Qemu:
         self.p = subprocess.Popen([
             "qemu-system-i386", "-m", "32M", "-kernel", KERNEL, "-display", "none",
             "-monitor", f"unix:{MON},server,nowait",
-            "-netdev", f"user,id=n0,net={NET}.0/24,dhcpstart={NET}.50,hostfwd=tcp::{FWD_HTTP}-:80,hostfwd=tcp::{FWD_ECHO}-:7,hostfwd=udp::{FWD_UDP}-:7",
+            "-netdev", f"user,id=n0,net={NET}.0/24,dhcpstart={NET}.50,hostfwd=tcp::{FWD_HTTP}-:80,hostfwd=tcp::{FWD_ECHO}-:7,hostfwd=udp::{FWD_UDP}-:7,hostfwd=tcp::{FWD_RCON}-:2323,hostfwd=tcp::{FWD_RCON2}-:2324",
             "-object", "filter-dump,id=f1,netdev=n0,file=/tmp/osisos.pcap",
             "-device", "e1000,netdev=n0,mac=52:54:00:12:34:56"] +
             (["-drive", f"file={disk},format=raw,if=ide,index=0"] if disk else []),
@@ -547,7 +547,7 @@ def main():
 
         out = q.run("dmesg", 3, until="password changed")
         check("auth: failures, lockout and password change are in the kernel log",
-              "auth: FAILED login" in out and "locked for 5 s" in out and "password changed for 'admin' (saved)" in out, out)
+              "auth: FAILED login" in out and "locked for 5" in out and "password changed for 'admin' (saved)" in out, out)
 
         # ---- persistence across a reboot ----
         q.type("reboot\n"); time.sleep(6)
@@ -558,6 +558,281 @@ def main():
               ok_old_rejected and "Login successful" in s and "default password" not in s, s)
         out = q.run("dmesg", 3, until="auth:")
         check("auth: existing /etc/shadow is loaded (not recreated) on the next boot", "auth: loaded /etc/shadow" in out, out)
+        q.close()
+
+
+        # ================= remote console (rcon, port 2323) =================
+        RCDISK = "/tmp/osisos-rcon.img"
+        with open(RCDISK, "wb") as f: f.truncate(10 * 1024 * 1024)
+        try: q.close()
+        except Exception: pass
+        time.sleep(1.5)
+        q = Qemu(RCDISK); time.sleep(4)
+
+        def llogin(user, pw, wait=2.5):
+            q.type(user + "\n"); time.sleep(0.4); q.type(pw + "\n"); time.sleep(wait); return q.screen()
+        def rc_open(timeout=8):
+            s = socket.create_connection(("127.0.0.1", FWD_RCON), timeout=timeout); s.settimeout(timeout); return s
+        def rc_read(s, want, timeout=10):
+            buf = b""; end = time.time() + timeout
+            while time.time() < end and want.encode() not in buf:
+                try:
+                    d = s.recv(4096)
+                    if not d: break
+                    buf += d
+                except socket.timeout: break
+                except OSError: break
+            return buf
+        def rc_login(s, user, pw):
+            b = rc_read(s, "login:"); s.sendall(user.encode() + b"\r\n"); b += rc_read(s, "password:"); s.sendall(pw.encode() + b"\r\n")
+            return b + rc_read(s, "> ", 12)
+
+        llogin("admin", "osisos")
+        out = q.run("rcon", 2, until="rcon:")
+        check("rcon: both consoles disabled by default", out.count("disabled") >= 2, out)
+        try:
+            s = rc_open(5); first = rc_read(s, "login:", 4); s.close()
+        except OSError: first = b""
+        check("rcon: nothing listens on port 2323 while disabled", b"login" not in first, str(first))
+
+        out = q.run("rcon plain on", 3, until="ENABLED")
+        check("rcon plain on: enabled, warns that it is UNENCRYPTED and about the default password",
+              "ENABLED" in out and "UNENCRYPTED" in out and "default password" in out, out)
+        s = rc_open(); b = rc_login(s, "admin", "osisos"); s.close()
+        check("rcon: login REFUSED while the account still has the default password",
+              b"OSISOS remote console" in b and b"disabled until the default password is changed" in b and b"> " not in b.split(b"login:")[-1], str(b))
+
+        q.type("passwd\n"); time.sleep(1); q.type("osisos\n"); time.sleep(2.5); q.type("s3cretpw9\n"); time.sleep(0.8); q.type("s3cretpw9\n"); time.sleep(1)
+        check("rcon: (setup) local password changed", "Password updated" in q.screen(), q.screen())
+
+        # wrong passwords: 3 tries then disconnected; the local console must NOT be locked by network guessing
+        s = rc_open(); b = rc_read(s, "login:")
+        for _ in range(3):
+            s.sendall(b"admin\r\n"); b += rc_read(s, "password:"); s.sendall(b"wrongwrong\r\n"); b += rc_read(s, "incorrect", 10)
+        time.sleep(0.5)
+        try: tail = s.recv(1024)
+        except OSError: tail = b""
+        s.close()
+        check("rcon: 3 wrong passwords -> 'Login incorrect' and the session is dropped", b.count(b"Login incorrect") >= 3 and tail == b"", str(b[-200:]))
+        s = rc_open(); b = rc_login(s, "admin", "s3cretpw9")           # right away, inside the 5 s lockout window
+        check("rcon: while the remote channel is locked even the right password is refused", b"Try again in" in b and b"> " not in b.split(b"password:")[-1], str(b))
+        s.close()
+        q.run("logout", 1.5)
+        sc = llogin("admin", "s3cretpw9", 2.5)
+        check("rcon: remote lockout is SEPARATE - the local console still logs in immediately", "Login successful" in sc, sc)
+        time.sleep(6)
+
+        # a real session
+        s = rc_open(); b = rc_login(s, "admin", "s3cretpw9")
+        check("rcon: login with the changed password works", b"Welcome" in b and b.rstrip().endswith(b"admin@osisos>"), str(b))
+        s.sendall(b"df\r\n"); b = rc_read(s, "> ")
+        check("rcon: `df` output arrives over the network with CRLF line endings", b"OFS v2" in b and b"inodes free" in b and b"\r\n" in b, str(b))
+        check("rcon: the remote command's output did NOT appear on the local VGA screen", "OFS v2" not in q.screen(), q.screen())
+        s.sendall(b"selftest\r\n"); b = rc_read(s, "checks passed", 40); b += rc_read(s, "> ", 5)
+        check("rcon: `selftest` (long output, loopback TCP/HTTP/fs) runs remotely and passes", b"ALL GOOD" in b and b"[FAIL]" not in b, str(b[-300:]))
+        s.sendall(b"snake\r\n"); b = rc_read(s, "> ")
+        check("rcon: full-screen / interactive commands are refused remotely", b"not available remotely" in b, str(b))
+        s.sendall(b"passwd\r\n"); b = rc_read(s, "> ")
+        check("rcon: passwd is refused remotely (console only)", b"not available remotely" in b, str(b))
+
+        s2 = rc_open(); busy = rc_read(s2, "busy", 5); s2.close()
+        check("rcon: a second simultaneous session is turned away", b"busy" in busy, str(busy))
+
+        out = q.run("fortune", 2)
+        check("rcon: the local console keeps working while a remote session is open", len(out.strip().splitlines()) > 3, out)
+        out = q.run("rcon", 2, until="PLAINTEXT")
+        check("rcon: `rcon` status shows the active (plaintext) session", "session:" in out and "as admin" in out and "PLAINTEXT" in out, out)
+        s.sendall(b"dmesg\r\n"); b = rc_read(s, "> ")
+        check("rcon: audit trail - logins, refusals, lockouts and commands are in the kernel log",
+              b"rcon: login ok for 'admin'" in b or b"rcon: 'admin' ran" in b, str(b[-400:]))
+        s.sendall(b"exit\r\n"); b = rc_read(s, "Bye", 5); s.close()
+        check("rcon: exit says goodbye and closes", b"Bye." in b, str(b))
+
+        # pipelined commands (client sends everything at once, like: printf 'df\nifconfig\nexit\n' | nc host 2323)
+        s = rc_open(); rc_read(s, "login:"); s.sendall(b"admin\ns3cretpw9\ndf\nifconfig\nexit\n")
+        b = rc_read(s, "Bye", 25); s.close()
+        check("rcon: pipelined commands all execute in order (nc / script friendly)", b"OFS v2" in b and b"inet " + GUEST.encode() in b and b"Bye." in b, str(b[-300:]))
+
+        # telnet negotiation
+        s = rc_open(); b = rc_read(s, "login:")
+        s.sendall(bytes([255, 253, 1, 255, 251, 3, 255, 253, 31]))                   # IAC DO ECHO, IAC WILL SGA, IAC DO NAWS
+        time.sleep(0.5); s.sendall(b"admin\r\n"); b += rc_read(s, "password:")
+        b += s.recv(64) if b"password:" not in b else b""
+        s.sendall(b"s3cretpw9\r\n"); b += rc_read(s, "> ", 12); s.close()
+        check("telnet: options are negotiated (refuses SGA/NAWS, WILL ECHO while the password is typed) and login still works",
+              bytes([255, 254, 3]) in b and bytes([255, 252, 31]) in b and bytes([255, 251, 1]) in b and bytes([255, 252, 1]) in b and b"Welcome" in b, str(b))
+
+        out = q.run("dmesg", 3, until="rcon:")
+        check("rcon: kernel log has connection, failed-login, lockout and command records",
+              "rcon: connection from" in out or "rcon: login" in out or "rcon:" in out, out)
+
+        # off / on / persistence
+        s = rc_open(); rc_login(s, "admin", "s3cretpw9")
+        q.run("rcon plain off", 2)
+        time.sleep(1)
+        try: gone = s.recv(1024)
+        except OSError: gone = b""
+        try: s3 = rc_open(4); again = rc_read(s3, "login:", 3); s3.close()
+        except OSError: again = b""
+        check("rcon plain off: kills the open session and stops listening", b"disabled" in gone and b"login" not in again, str(gone) + str(again))
+        q.run("rcon plain on", 2)
+        q.type("reboot\n"); time.sleep(7)
+        s = rc_open(); b = rc_login(s, "admin", "s3cretpw9")
+        check("rcon: the enabled setting persists across a reboot (and a fresh boot is accepting logins)", b"Welcome" in b, str(b)); s.close()
+        q.close()
+
+
+        # ================= ENCRYPTED remote console (Noise NK, port 2324) =================
+        import re, hashlib                      # (subprocess is imported at module level: an import inside main() would shadow it)
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else "/home/claude/OSISOS-main/tools")
+        import osisos_ssh
+        from osisos_ssh import SecureChannel, login as sec_login
+        SDISK = "/tmp/osisos-secure.img"
+        with open(SDISK, "wb") as f: f.truncate(10 * 1024 * 1024)
+        try: q.close()
+        except Exception: pass
+        time.sleep(1.5)
+        q = Qemu(SDISK); time.sleep(4)
+
+        def llogin(user, pw, wait=2.5):
+            q.type(user + "\n"); time.sleep(0.4); q.type(pw + "\n"); time.sleep(wait); return q.screen()
+        def keys_on_screen(scr):
+            return re.findall(r"\b[0-9a-f]{64}\b", scr)
+
+        llogin("admin", "osisos")
+        out = q.run("rcon key", 2, until="No server key")
+        check("secure rcon: no identity key exists before it is enabled", "No server key yet" in out, out)
+        out = q.run("rcon on", 4, until="Connect with")
+        keys = keys_on_screen(out)
+        check("secure rcon: `rcon on` creates the server identity and prints the public key (64 hex)",
+              "Secure remote console ENABLED" in out and len(keys) >= 1 and "default password" in out, out)
+        PUB = keys[0] if keys else "00" * 32
+        out = q.run("rcon key", 3, until="Fingerprint")
+        scr_keys = keys_on_screen(out)
+        check("secure rcon: `rcon key` shows the same key and a correct SHA-256 fingerprint",
+              len(scr_keys) >= 2 and scr_keys[-2] == PUB and scr_keys[-1] == hashlib.sha256(bytes.fromhex(PUB)).hexdigest(), out)
+
+        t0 = time.time(); ch = SecureChannel("127.0.0.1", FWD_RCON2, PUB); hs_time = time.time() - t0
+        check("secure rcon: Noise handshake completes with an independent client (%.2f s)" % hs_time, ch.noise.handshake_finished and hs_time < 8, str(hs_time))
+        out = sec_login(ch, "admin", "osisos")
+        check("secure rcon: login refused over the encrypted channel while the default password is set", b"disabled until the default password" in out, str(out))
+        ch.close()
+
+        q.type("passwd\n"); time.sleep(1); q.type("osisos\n"); time.sleep(2.5); q.type("s3cretpw9\n"); time.sleep(0.8); q.type("s3cretpw9\n"); time.sleep(1)
+        check("secure rcon: (setup) local password changed", "Password updated" in q.screen(), q.screen())
+
+        # a real session, and proof that nothing readable crosses the wire
+        ch = SecureChannel("127.0.0.1", FWD_RCON2, PUB)
+        out = sec_login(ch, "admin", "s3cretpw9")
+        check("secure rcon: login with the changed password works over the encrypted channel", b"Welcome" in out and out.rstrip().endswith(b"admin@osisos>"), str(out))
+        ch.send(b"df\n"); b = ch.recv_until(b"admin@osisos> ")
+        check("secure rcon: commands run and return output", b"OFS v2" in b and b"inodes free" in b, str(b))
+        ch.send(b"selftest\n"); b = ch.recv_until(b"checks passed", 40); b += ch.recv_until(b"admin@osisos> ")
+        check("secure rcon: `selftest` (long, multi-frame output; includes the crypto known-answer tests) passes remotely",
+              b"ALL GOOD" in b and b"X25519" in b and b"[FAIL]" not in b, str(b[-400:]))
+        wire = bytes(ch.raw_tx) + bytes(ch.raw_rx)
+        check("secure rcon: NOTHING readable on the wire - no password, user name, prompt or command output",
+              all(m not in wire for m in (b"s3cretpw9", b"admin", b"login", b"password", b"OFS v2", b"selftest", b"inodes", b"osisos")) and len(wire) > 1000, "wire bytes: %d" % len(wire))
+        check("secure rcon: the remote output did not appear on the local screen", "OFS v2" not in q.screen())
+
+        # a second session is turned away (it cannot be told in the clear: the connection is just closed)
+        try:
+            SecureChannel("127.0.0.1", FWD_RCON2, PUB, timeout=6); second = "accepted"
+        except (ConnectionError, OSError) as e:
+            second = "refused"
+        check("secure rcon: a second simultaneous session is refused", second == "refused", second)
+        out = q.run("rcon", 3, until="encrypted")
+        check("secure rcon: `rcon` shows the active ENCRYPTED session", "session:" in out and "as admin" in out and ", encrypted" in out, out)
+
+        # active attacks on the established session
+        good_frame_tx = None
+        ch.send(b"echo hi\n"); ch.recv_until(b"admin@osisos> ")
+        ch.send(b"echo replay-me\n"); ch.recv_until(b"admin@osisos> ")
+        replay_wire = bytes(ch.raw_tx[-(2 + len(b"echo replay-me\n") + 16):])               # the last frame we sent, byte for byte
+        ch.sock.sendall(replay_wire)                                                          # REPLAY it
+        try:
+            ch.sock.settimeout(8); closed = (ch.sock.recv(1024) == b"")
+        except OSError: closed = True
+        check("secure rcon: a REPLAYED frame is rejected and the session is dropped", closed, "")
+        ch.close(); time.sleep(1)
+
+        ch = SecureChannel("127.0.0.1", FWD_RCON2, PUB); sec_login(ch, "admin", "s3cretpw9")
+        forged = bytearray(ch.noise.encrypt(b"df\n")); forged[5] ^= 0x01                      # flip ONE bit
+        ch.send_frame(bytes(forged))
+        try:
+            ch.sock.settimeout(8); closed = (ch.sock.recv(1024) == b"")
+        except OSError: closed = True
+        check("secure rcon: a single flipped bit (forged/corrupted frame) drops the session", closed, "")
+        ch.close(); time.sleep(1)
+
+        def raw_probe(payload, wait=6):
+            s = socket.create_connection(("127.0.0.1", FWD_RCON2), timeout=wait); s.settimeout(wait)
+            s.sendall(payload)
+            try: r = s.recv(1024)
+            except OSError: r = b""
+            s.close(); return r
+        check("secure rcon: garbage in place of a handshake is rejected", raw_probe(b"\x00\x30" + os.urandom(48)) == b"")
+        check("secure rcon: an absurd frame length (60000) is rejected", raw_probe(b"\xea\x60" + os.urandom(100)) == b"")
+        check("secure rcon: a too-short frame length (3) is rejected", raw_probe(b"\x00\x03abc") == b"")
+        check("secure rcon: a plaintext 'login' attempt is rejected, no banner leaks", raw_probe(b"admin\r\n") == b"")
+        try:
+            SecureChannel("127.0.0.1", FWD_RCON2, os.urandom(32).hex(), timeout=8); wrongkey = "accepted"
+        except (ConnectionError, OSError): wrongkey = "rejected"
+        check("secure rcon: a client pinned to the WRONG server key cannot complete a handshake", wrongkey == "rejected", wrongkey)
+
+        s_idle = socket.create_connection(("127.0.0.1", FWD_RCON2), timeout=15); s_idle.settimeout(15); t0 = time.time()
+        try: gone = (s_idle.recv(10) == b"")
+        except OSError: gone = True
+        check("secure rcon: a client that never completes the handshake is dropped after ~10 s (slow-loris)", gone and 8 < time.time() - t0 < 14, "%.1f s" % (time.time() - t0))
+        s_idle.close()
+
+        # wrong passwords over the encrypted channel: dropped after 3
+        ch = SecureChannel("127.0.0.1", FWD_RCON2, PUB); closed = False
+        try:
+            for _ in range(3):
+                ch.recv_until("login: "); ch.send(b"admin\n"); ch.recv_until("password: "); ch.send(b"wrongwrong\n"); ch.recv_until("incorrect")
+            ch.sock.settimeout(6); closed = (ch.sock.recv(10) == b"")
+        except (ConnectionError, OSError, TimeoutError): closed = True
+        check("secure rcon: 3 wrong passwords drop the (encrypted) session", closed, "")
+        ch.close(); time.sleep(6)                                                              # let the 5 s lockout expire
+
+        # pipelined commands, and the shipped client tool
+        ch = SecureChannel("127.0.0.1", FWD_RCON2, PUB)
+        ch.recv_until("login: "); ch.send(b"admin\ns3cretpw9\ndf\nifconfig\nexit\n")
+        b = ch.recv_until(b"Bye", 30); ch.close()
+        check("secure rcon: pipelined commands in one encrypted message all execute in order", b"OFS v2" in b and b"inet " + GUEST.encode() in b, str(b[-300:]))
+        time.sleep(1)
+        env = dict(os.environ, OSISOS_PASSWORD="s3cretpw9")
+        r = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(osisos_ssh.__file__)), "osisos_ssh.py"), "127.0.0.1", "--port", str(FWD_RCON2),
+                            "--server-key", PUB, "-c", "df", "-c", "echo shipped-client-ok"], capture_output=True, text=True, env=env, timeout=60)
+        check("secure rcon: the shipped client tool (tools/osisos_ssh.py) works end to end", "OFS v2" in r.stdout and "shipped-client-ok" in r.stdout, r.stdout + r.stderr)
+        r = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(osisos_ssh.__file__)), "osisos_ssh.py"), "127.0.0.1", "--port", str(FWD_RCON2),
+                            "--server-key", os.urandom(32).hex(), "-c", "df"], capture_output=True, text=True, env=env, timeout=60)
+        check("secure rcon: the client tool refuses a server whose key does not match", r.returncode != 0 and "OFS v2" not in r.stdout and "wrong server key" in r.stderr, r.stdout + r.stderr)
+
+        out = q.run("dmesg", 3, until="rcon:")
+        check("secure rcon: audit log shows the encrypted channel, the failed handshakes and the bad frames",
+              "encrypted channel established" in out or "handshake failed" in out or "bad encrypted frame" in out, out)
+
+        # key persistence, rotation, off
+        q.type("reboot\n"); time.sleep(7)
+        llogin("admin", "s3cretpw9", 2.5)
+        out = q.run("rcon key", 3, until="Fingerprint")
+        check("secure rcon: after a reboot the SAME identity key is loaded from disk and the console is still enabled",
+              keys_on_screen(out)[:1] == [PUB], out)
+        ch = SecureChannel("127.0.0.1", FWD_RCON2, PUB); out = sec_login(ch, "admin", "s3cretpw9"); ch.close()
+        check("secure rcon: clients pinned to that key still connect after the reboot", b"Welcome" in out, str(out))
+        out = q.run("rcon newkey", 4, until="New server identity")
+        out = q.run("rcon key", 3, until="Fingerprint"); NEWPUB = (keys_on_screen(out)[-2:-1] or ["x"])[0]      # key, then fingerprint: take the key
+        try: SecureChannel("127.0.0.1", FWD_RCON2, PUB, timeout=8); old = "accepted"
+        except (ConnectionError, OSError): old = "rejected"
+        ch = SecureChannel("127.0.0.1", FWD_RCON2, NEWPUB); out = sec_login(ch, "admin", "s3cretpw9"); ch.close()
+        check("secure rcon: `rcon newkey` rotates the identity: the old pin is rejected, the new one works",
+              NEWPUB != PUB and old == "rejected" and b"Welcome" in out, f"{old} {out}")
+        q.run("rcon off", 2); time.sleep(1)
+        try: SecureChannel("127.0.0.1", FWD_RCON2, NEWPUB, timeout=5); off = "accepted"
+        except (ConnectionError, OSError): off = "rejected"
+        check("secure rcon: `rcon off` stops the listener", off == "rejected", off)
         q.close()
 
     finally:

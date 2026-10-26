@@ -1,246 +1,140 @@
-# OSISOS TCP/IP stack
+# Networking
 
-A from-scratch IPv4 + TCP stack for the OSISOS kernel, sitting on top of the
-existing e1000 driver. Everything lives in `kernel/net/`.
+The network stack lives in `kernel/net/` and sits on the e1000 driver. All of it is written from scratch.
+Time everywhere is the 100 Hz PIT tick (`net_now()`; `NET_HZ = 100`).
 
 ```
- shell commands   ifconfig arp ping nslookup dns dhcp netstat nc http  net/netcmd.c
- httpd            static file server on port 80, streams from OFS      net/httpd.c
- built-in servers echo (TCP+UDP port 7), polling of all services      net/services.c
- DHCP / DNS       lease acquisition+renewal; A-record resolver+cache net/dhcp.c  dns.c
- TCP              state machine, retransmit, flow control, sockets   net/tcp.c  tcp.h
- UDP              datagram sockets with receive queues               net/udp.c  udp.h
- IPv4 + ICMP      routing, checksums, echo                           net/net.c
- ARP              cache, pending-packet queue                        net/net.c
- Ethernet         dst-MAC filtering                                  net/net.c
- e1000 driver     raw frames in/out                                  drivers/e1000.c
+ shell commands / rcon     netcmd.c   rcon.c
+ HTTP, echo                httpd.c    services.c
+ DHCP    DNS               dhcp.c     dns.c
+ TCP     UDP               tcp.c      udp.c
+ IPv4 + ICMP + ARP         net.c
+ e1000 driver              drivers/e1000.c
 ```
 
-## Try it
+Conventions: IPv4 addresses in APIs are host-order `uint32_t` (`IP4(10,0,2,15)`); header structs hold wire-order
+bytes/network-order fields; every public entry point takes `net_lock()` (interrupts off) and must not block while holding it.
 
-```sh
-cd kernel
-make run-direct        # boots osisos.bin straight in QEMU (no GRUB needed)
-# or: make run-user    # via the ISO
-```
+## 1. Driver and Ethernet (`drivers/e1000.c`, `net.c`)
 
-QEMU's user-mode network gives the guest `10.0.2.15`, gateway/host `10.0.2.2`.
-The address now comes from **DHCP** (QEMU's built-in server hands out 10.0.2.15,
-gateway/host `10.0.2.2`, DNS `10.0.2.3`). Log in (`admin` / `osisos`), then:
+* 32 receive descriptors (2 KB buffers) and 8 transmit descriptors; polled, no interrupts yet. The NIC is
+  configured promiscuous, so `net_rx_frame()` filters on the destination MAC (ours or broadcast).
+* RX buffers are driver-owned; a frame stays valid until the next `e1000_receive_packet()` (descriptors are handed back lazily).
+  Frames with errors or without EOP are dropped.
+* TX copies the frame into a driver-owned buffer and waits (bounded) for a free descriptor, so callers may reuse their buffer at once.
+* Setup fails loudly if a DMA buffer allocation fails.
 
-| Command | What it does |
+## 2. ARP
+
+8-entry cache (5-minute TTL, oldest evicted). Senders are learned only if the packet targets us or they are already
+known (no unsolicited cache filling). A datagram whose next hop is unknown is **queued** (4 slots) while the request is
+broadcast; it is retried once a second, 3 times, then dropped. The queue is flushed when the reply arrives.
+`net_set_ip()` sends a gratuitous ARP.
+
+## 3. IPv4 and ICMP
+
+* Receive: version/IHL/length/checksum validated, fragments dropped (we never fragment: DF is set), accepted if addressed to us,
+  to 255.255.255.255 or to the subnet broadcast. Protocol dispatch: ICMP, UDP, TCP (unicast only).
+* Send: next hop = destination if on-link (mask), else the gateway; broadcasts go to the Ethernet broadcast address. With no
+  address configured only limited broadcasts may be sent (that is what lets DHCP work).
+* **Loopback**: `127.x.x.x` is mapped to our own address (`net_canon`), and packets addressed to ourselves are queued internally
+  (8 slots) and delivered by the next `net_poll()` as if received from the wire.
+* ICMP: echo request -> reply; `icmp_ping()` is a blocking client with an RTT in ticks. No ICMP error generation yet.
+* Checksums use the byte-order-independent RFC 1071 routine (`net_csum_add` / `net_csum_fold`).
+
+## 4. UDP (`udp.c`)
+
+8 sockets, each with a queue of 4 datagrams (up to 1472 bytes). API: `udp_socket / bind / sendto / recvfrom / close`;
+`sendto` auto-binds an ephemeral port. Checksums are verified (0 = "none" accepted) and generated (0 -> 0xFFFF).
+Datagrams for unbound ports are silently dropped (no ICMP port-unreachable).
+
+## 5. TCP (`tcp.c`)
+
+A full RFC 793 state machine (LISTEN, SYN_SENT, SYN_RCVD, ESTABLISHED, FIN_WAIT_1/2, CLOSE_WAIT, CLOSING, LAST_ACK, TIME_WAIT)
+including simultaneous open/close, with RFC 5961-style reset hardening.
+
+| Item | Value |
 |---|---|
-| `ifconfig` | MAC, IP, counters. `ifconfig <ip> <mask> <gw>` to change. |
-| `ping 10.0.2.2` | ICMP echo x4. Accepts a hostname too: `ping example.com`. |
-| `nslookup <name>` | Resolve through DNS. `dns` shows the server, `dns <ip>` changes it. |
-| `dhcp` / `dhcp renew` | Show DHCP state and lease / renew the lease now. |
-| `arp` | ARP cache. |
-| `mkdir www` + `fetch <host> <port> <url> /www/<name>` | Download a file over HTTP into OFS: publishes it on the web server. |
-| `httpd` / `httpd root <dir>` | Server stats, last requests (access log), document root. |
-| `http 10.0.2.2 8000 /` | TCP client: HTTP GET to a server on your host. |
-| `nc 10.0.2.2 5555 hello` | TCP client: connect, send `hello\n`, print the reply. |
-| `netstat` | TCP socket table and states. |
-| `netdrop 15` | Drop 15% of IP frames (rx+tx) to watch retransmission. `netdrop 0` to stop. |
+| Sockets | 12 (static table); each has a 4 KB receive ring and a 4 KB send ring |
+| MSS | 1460 advertised; the peer's MSS option is honoured (536 if absent) |
+| Retransmission | one timer per connection, go-back-N from `SND.UNA`; RTO 1 s doubling to 32 s; abort after 8 retries |
+| Flow control | advertised window = free receive space; peer window honoured; 1-byte zero-window probes; window-update ACK when the app drains the buffer |
+| Close | TIME_WAIT 2 s (shortened, only 12 sockets); a full table recycles the oldest TIME_WAIT socket; FIN_WAIT_2 times out after 60 s |
+| Listen | backlog of 4 un-accepted connections per listener |
+| ISN | TSC- and tick-mixed counter |
+| Handling of old duplicates | still honours the ACK field (fixes simultaneous-close stalls) |
 
-Host side (while the VM runs):
+Socket API (`tcp.h`): `tcp_socket, tcp_listen, tcp_accept, tcp_connect, tcp_send, tcp_recv, tcp_close, tcp_send_space, tcp_get_info`.
+Timeouts are in ticks: `TCP_NOWAIT` (0) never blocks and returns `TCP_AGAIN`; `TCP_FOREVER` waits. Errors are negative:
+`TCP_ERR, TCP_AGAIN, TCP_TIMEOUT, TCP_RESET, TCP_REFUSED`. `tcp_recv` returns 0 at EOF.
 
-```sh
-python3 -m http.server 8000            # then, in OSISOS:  http 10.0.2.2 8000 /
-curl http://127.0.0.1:8080/            # served BY the OSISOS kernel (port 80)
-nc 127.0.0.1 8007                      # echo server inside OSISOS (port 7)
-```
+**Not implemented:** out-of-order reassembly (out-of-order segments are dropped and dup-ACKed; the sender retransmits),
+congestion control (slow start / fast retransmit), RTT estimation, SACK, window scaling, timestamps, delayed ACK, Nagle, urgent data.
 
-Run the automated suite (needs `qemu-system-i386`, Python 3):
+## 6. DHCP (`dhcp.c`)
 
-```sh
-cd kernel && make osisos.bin && python3 ../tools/nettest.py
-```
+Non-blocking client state machine: `INIT -> SELECTING -> REQUESTING -> BOUND -> RENEWING`. DISCOVER/REQUEST are broadcast from
+0.0.0.0 with the BROADCAST flag; DISCOVER retries after 1, 2, 4, 8 s. A lease is applied (address, mask, router, DNS) and
+renewed by unicast at T1 (50 %), by broadcast after T2 (87.5 %); at expiry the address is dropped. If nothing answers in ~15 s
+a **static fallback** (`10.0.2.15`, gateway `10.0.2.2`, DNS `10.0.2.3`) is installed and discovery retries every minute.
+`ifconfig <ip> <mask> <gw>` switches DHCP off. Not implemented: ARP-conflict probing, DECLINE, RELEASE, INIT-REBOOT.
 
-## Using TCP from kernel code
+## 7. DNS (`dns.c`)
 
-```c
-#include "tcp.h"
+Blocking stub resolver for A records: one recursive query to `netif.dns`, 3 tries, 8-entry cache (TTL capped at 5 minutes).
+Replies are accepted only from the configured server on port 53 with the matching 16-bit id. Names are validated, compression
+pointers are parsed with bounds checks, CNAME chains work through the A records recursive servers include. Do not call it from the network task.
 
-/* client */
-int s = tcp_socket();
-if (tcp_connect(s, IP4(10,0,2,2), 8000, 5 * NET_HZ) == TCP_OK) {
-    tcp_send(s, "hello", 5, TCP_FOREVER);
-    char buf[64];
-    int n = tcp_recv(s, buf, sizeof buf, 3 * NET_HZ);   /* 0 = peer closed */
-}
-tcp_close(s);
+## 8. HTTP server (`httpd.c`)
 
-/* server (non-blocking style, see net/services.c) */
-int l = tcp_socket();
-tcp_listen(l, 8080);
-int c = tcp_accept(l, TCP_NOWAIT);                      /* TCP_AGAIN if none yet */
-```
+Port 80, six concurrent connections, HTTP/1.1 with `Connection: close`. A per-connection non-blocking state machine reads the
+request (max 768 bytes), builds the response and **streams the body from disk in 1 KB chunks**, copying only what the TCP send
+buffer has room for, so slow clients never block others. Extra clients wait in the TCP backlog.
 
-Timeouts are in ticks (100/s). `TCP_NOWAIT` never blocks, `TCP_FOREVER` waits
-indefinitely. Errors are negative: `TCP_ERR, TCP_AGAIN, TCP_TIMEOUT, TCP_RESET,
-TCP_REFUSED`.
-
-## UDP, DHCP and DNS
-
-```c
-#include "udp.h"
-int s = udp_socket();
-udp_bind(s, 5000);                                         /* optional: sendto auto-binds */
-udp_sendto(s, IP4(10,0,2,2), 5000, "hi", 2);
-n = udp_recvfrom(s, buf, sizeof buf, &src_ip, &src_port, 3 * NET_HZ);
-
-#include "dns.h"
-uint32_t ip;
-if (dns_resolve("example.com", &ip, 6 * NET_HZ) == DNS_OK) tcp_connect(s, ip, 80, ...);
-```
-
-**DHCP** (`dhcp.c`) runs as a non-blocking state machine inside the network task:
-`INIT -> SELECTING -> REQUESTING -> BOUND -> RENEWING`. It broadcasts DISCOVER/REQUEST
-from 0.0.0.0 with the BROADCAST flag (we cannot receive unicast to an address we do not own
-yet), renews by unicast at T1 (50% of the lease), falls back to broadcast at T2 (87.5%), and drops the
-address if the lease expires. If no server answers after 4 attempts (~15 s) it installs a static
-fallback (`10.0.2.15`, DNS `10.0.2.3`) and retries in the background every minute.
-`ifconfig <ip> <mask> <gw>` switches DHCP off (state `STATIC`); `dhcp renew` turns it back on.
-
-**DNS** (`dns.c`) is a blocking stub resolver: one recursive A query to `netif.dns`, 3 tries, TTL cache
-(max 5 min, 8 entries), compression-pointer parsing with bounds checks, and it ignores replies with the
-wrong transaction id or source. Never call it from the network task (it waits for that task to deliver the reply).
-
-## Web server (`httpd.c`) and the filesystem it needs
-
-```
-mkdir www
-fetch 10.0.2.2 8000 /index.html /www/index.html     # from `python3 -m http.server 8000` on your host
-curl http://127.0.0.1:8080/                         # (run-user forwards host 8080 -> guest 80)
-```
-
-- Serves files from the OFS directory `/www` (change with `httpd root /other`). `GET` and `HEAD` only (405 otherwise);
-  `Content-Type` from the extension; `/dir` redirects to `/dir/`; a directory without `index.html` gets a listing;
-  `/_status` returns plain-text statistics; with no `/www` the built-in welcome page is served.
-- Files are **streamed from disk in 1 KB chunks**, so size is limited by OFS, not RAM. Slow clients cannot block
-  others (it only copies what the TCP send buffer has room for). 6 connections at once; the rest wait in the backlog.
-- Hardening: header size limit (431), target length limit (414), `.`/`..` segments, backslashes, control
-  characters and bad `%` escapes rejected with 400 *before* any filesystem lookup, 30 s idle timeout.
-
-OFS changes the web server needed (the old API still works; see the v2 notes below for what came after):
-
-| Change | Why |
+| Status | When |
 |---|---|
-| `ofs_lookup/stat/readdir/inode_read/put` (absolute paths) | The old API is relative to the shell's `cd` global; a server must not move your working directory. |
-| Files can span many sectors (stored contiguously, up to 2 MB) | The old limit was 512 bytes per file. |
-| `ofs_put` writes data first, then publishes the inode | A reader never sees a half-written file. |
-| IDE reads/writes run with interrupts off and have bounded waits | Shell and network tasks could interleave ATA command sequences and corrupt each other. |
-| `ofs_read_file` clamps its terminator | It wrote `buffer[size]`: a 1-byte stack overflow for 512-byte files and a huge one for big files (`cat bigfile`). |
+| 200 | file, directory listing, `/_status`, welcome page |
+| 301 | `/dir` -> `/dir/` |
+| 400 | malformed request line, `.`/`..` segments, backslash/control characters, bad `%xx` |
+| 404 | not found; anything under `/etc` |
+| 405 | method other than GET/HEAD (with `Allow:`) |
+| 414 / 431 | target / headers too long |
+| 418 | `/teapot` |
 
-`fetch` buffers the whole download in RAM (max 256 KB).
+30-second idle timeout. An access log (last 16) is kept and every request is written to the kernel log.
 
-## Filesystem v2, loopback, self-test and the extras
+## 9. Remote console (`rcon.c`)
 
-**OFS v2** (`fs/ofs.c`): 128 inodes (inode table in blocks 1-8, data from block 9). Every file is one contiguous
-extent; free space is *derived from the inode table* (first-fit over the gaps), so there is no bitmap that can get out of
-sync, deleted files' space is reused immediately, and shrinking a file frees its tail. New shell commands:
-`rm`, `rmdir`, `mv` (also moves into a directory), `df`. **v1 disks are upgraded automatically at boot**
-(data blocks are relocated, nothing is wiped; see `migrate_v1`). Limits: names up to 21 chars, files up to 2 MB, no
-permissions or timestamps; a file being streamed by httpd while it is deleted just aborts that transfer.
+Two listeners, one shared session slot. **Port 2324 is encrypted**; port 2323 is the legacy plaintext mode.
 
-**Loopback**: `127.0.0.x` and your own address are delivered internally, so `ping 127.0.0.1`, `nc localhost 7`,
-`http localhost` work even with no network.
+Encrypted framing and protocol: `Noise_NK_25519_ChaChaPoly_SHA256` (prologue `OSISOS-RCON-1`). Every message on the TCP stream is
+`2-byte big-endian length | body`, bodies at most 700 bytes.
 
-**`selftest`** runs the stack against itself and reports `[ OK ]` / `[FAIL]`: ICMP, UDP and a 3000-byte TCP echo
-over loopback, the HTTP server, a filesystem write/read/delete, creating 100 files in the inode table, and the heap.
+```
+client                                                    server (static key s, pinned by the client)
+  -> 48 B: e, es                                            handshake message 1   (ephemeral key + AEAD tag)
+  <- 48 B: e, ee                                            handshake message 2
+  == transport: ChaCha20-Poly1305, 64-bit counter nonces, one key per direction (forward secret) ==
+  <- "login: "  -> user  <- "password: "  -> password       (text, but inside encrypted messages)
+```
 
-**`dmesg`** shows the kernel log (`klog()`; DHCP leases, HTTP requests, filesystem upgrades). Add your own with
-`klog("something happened: %I", ip)`.
+The network task runs the handshake (3 X25519 operations, about 0.1 s) and the framing; decrypted bytes feed the same line editor as the
+plaintext mode. Any invalid length, failed decryption (forgery, corruption, replay: the nonce counter only advances on success) or
+10-second handshake stall closes the connection. Commands execute in the shell task, with output encrypted back (`send_secure`).
+Crypto code: `core/x25519.c`, `chacha20poly1305.c`, `noise.c`, `sha256.c`, `rng.c`. Key management: `/etc/rcon.key` (see [SECURITY.md](SECURITY.md)).
 
-**Extras** (`core/extras.c`): `sysinfo`, `about`, `fortune`, `cowsay <text>`, `matrix`, `snake` (WASD, Q to quit), `sl`,
-and some easter eggs. Full-screen programs run in the shell task, so the web server keeps serving while you play.
+## 10. Packet walk-through: `http 10.0.2.2 8000 /`
 
-## Crash handling (`arch/i386/exceptions.S`, `core/panic.c`)
+1. The shell task calls `tcp_connect()` -> `send_syn()` -> `tcp_xmit()` builds the segment with a pseudo-header checksum ->
+   `net_ip_send()` -> next hop is the gateway; its MAC is unknown, so the datagram is queued and an ARP request goes out.
+2. The network task's `net_poll()` receives the ARP reply, `arp_update()` flushes the queued SYN through `eth_send()` -> `e1000_send_packet()`.
+3. The SYN-ACK arrives: `net_rx_frame` -> `ip_input` -> `tcp_input` -> `tcp_segment` (SYN_SENT) -> ESTABLISHED, ACK sent.
+4. The shell task, sleeping in `net_wait()`, sees the state change and returns from `tcp_connect()`; the request and response
+   then flow through the send/receive rings with ACKs, and `tcp_close()` runs the FIN handshake.
 
-Before this, only divide-by-zero had an IDT entry: any other fault (page fault, GPF, invalid opcode ...) became a
-triple fault and a silent reset with no clue why. Now **all 32 CPU exception vectors** reach `exception_handler()`, which
-writes the event to the kernel log and paints a panic screen straight into VGA memory: the exception name and a
-plain-English cause (e.g. *NULL pointer dereference (write, kernel mode) at 00000000*), EIP/registers/CR0/CR2/CR3, the top
-stack words, uptime and the last kernel log lines. It then counts down 15 s and reboots (**R** = reboot now,
-**H** = halt and keep the screen). The web server and the disk come back after the reboot.
+## 11. Diagnostics
 
-- **NULL guard**: page 0 is unmapped after paging starts, so NULL-pointer bugs fault loudly instead of silently
-  reading/writing low memory.
-- **`kpanic("message")`**: call it from kernel code for unrecoverable conditions (it disables interrupts first).
-- **`crash null|div0|ud|gpf|page|panic`**: deliberately fault the kernel to see/test all of this.
-- Limits: a *double fault* caused by a stack overflow cannot be handled on the same stack (it triple-faults);
-  fixing that needs a dedicated TSS task gate. The panic report is not persisted to disk yet.
-
-## Authentication (`core/auth.c`, `core/sha256.c`)
-
-Login no longer compares against a hardcoded string. Passwords are stored as **salted, iterated hashes**
-(PBKDF2-HMAC-SHA256, 4096 iterations, 16-byte random salt, fresh salt on every change) in `/etc/shadow`; the
-plaintext is never stored and the typed password is wiped from memory right after use. The SHA-256 / HMAC / PBKDF2
-code is verified against Python's `hashlib` (including SHA-256 block-boundary lengths and the RFC 7914 vector), and
-`selftest` re-checks known answers inside the OS.
-
-- **First boot** creates `admin` / `osisos` and flags it *must change*: the shell warns on every login until you run **`passwd`**
-  (asks for the current password, then the new one twice, input masked, 6-63 characters).
-- **Throttling**: 3 consecutive failures lock logins for 5 s, doubling each further failure up to 5 min. While locked, the password
-  is not even checked, so guessing is rate-limited. Unknown users take as long as wrong passwords (no user enumeration by timing),
-  comparison is constant-time, and every success/failure goes to `dmesg` (user names are sanitised in the log).
-- **`/etc` is invisible to the web server** (404, and hidden from listings) even when the document root is `/`.
-- Fixed: login used to copy up to 255 typed characters into 32-byte buffers (a global buffer overflow at the login prompt).
-- Limits: one account (`admin`) and no privilege levels; no password ageing; the default password is public until changed;
-  the console is local, there is no remote login yet.
-
-## Design notes (things worth knowing)
-
-**Concurrency.** The PIT preempts tasks at 100 Hz, so the shell task and the
-network task can interleave anywhere. Every public entry point takes
-`net_lock()` (save EFLAGS + `cli`). Blocking calls release it and `hlt` until
-the next interrupt. Never call `net_wait()`/`task_yield()` while holding it.
-
-**Receive path is polled.** `network_task` calls `net_poll()` in a loop; there is
-no e1000 interrupt handler yet. The returned RX buffer stays valid until the next
-`e1000_receive_packet()` because the driver hands descriptors back lazily.
-
-**Addresses.** Public API uses host-order `uint32_t` (`IP4(10,0,2,15)`). Packet
-structs hold wire-order bytes.
-
-**TCP in one paragraph.** `tcp_input()` verifies the checksum, finds the
-connection by 4-tuple (or a listener), then `tcp_segment()` follows RFC 793:
-acceptability check, RST, SYN, ACK processing (frees acked send-buffer bytes,
-advances the closing states), payload into the receive ring, FIN handling, then
-`tcp_output()` sends whatever the peer's window allows. A single retransmit timer
-per connection resends from the oldest unacked byte (go-back-N) with exponential
-backoff (1 s -> 32 s, 8 tries, then abort). A 1-byte probe is sent into a closed
-window.
-
-## Bugs found and fixed in the existing code while building this
-
-1. **Kernel heap was 4 KB total and never grew.** The e1000 driver wants ~70 KB, so
-   most RX buffers silently ended up at physical address 0 (and tasks' 4 KB stacks
-   too). Heap is now 1 MB of contiguous frames (`pmm_alloc_contiguous`) with free-block
-   coalescing, and driver init fails loudly if allocation fails.
-2. **`e1000_send_packet` didn't copy or wait.** The caller's buffer was handed to DMA
-   and could be reused/freed before the NIC read it. Now copies into driver-owned
-   buffers and waits (bounded) for a free descriptor.
-3. **Linker put `.note.gnu.build-id` first**, pushing the Multiboot header past the 8 KB
-   search window with some toolchains (`qemu -kernel` refuses to boot). Added
-   `--build-id=none`.
-4. **No header dependency tracking in the Makefile**: editing a struct in a header left
-   stale objects that silently corrupted memory. Added `-MMD -MP`.
-
-## Known limitations / next steps (roughly in order of payoff)
-
-- **Out-of-order segments are dropped** (sender retransmits). Add a reassembly queue / SACK.
-- **No congestion control** (slow start, fast retransmit/recovery). Fine on a LAN; wrong on the internet.
-- **Fixed RTO**; add RTT estimation (RFC 6298).
-- **OFS**: contiguous extents mean a very fragmented disk can fail to fit a large file even with enough total free space; no permissions/timestamps. Subdirectory depth for `ofs_abspath` is 16.
-- **httpd**: no keep-alive, no `Range`, no `If-Modified-Since`/ETag (OFS has no timestamps), no upload (`PUT`).
-- **UDP**: no ICMP port-unreachable for closed ports (datagrams are silently dropped), no IP-level
-  fragmentation of large datagrams.
-- **DHCP**: no ARP-conflict probe before using a lease, no DECLINE/RELEASE, no INIT-REBOOT.
-  **DNS**: A records only (no AAAA), no TCP fallback for truncated answers, no search domains.
-- **IP fragmentation is not supported** (fragments are dropped; we always set DF).
-- **e1000 interrupts** instead of polling would cut latency (RX is currently serviced once per
-  scheduler slice) and CPU use.
-- Delayed ACKs, Nagle, window scaling, keepalives, `shutdown()` half-close.
-- Two-instance mode (`make run` / `run2`, `-netdev socket`) has no DHCP server, so each instance falls
-  back to `10.0.2.15` / `10.0.2.16` (by MAC) after ~15 s. Untested; the single-instance QEMU path is what the suite covers.
+* `ifconfig`: frame/segment counters, retransmissions, dropped SYNs. `netstat`: socket table. `arp`, `dhcp`, `dns`.
+* `netdrop N`: random loss, both directions. `dmesg`: DHCP, httpd, auth, rcon events.
+* Packet capture under QEMU: add `-object filter-dump,id=f1,netdev=n0,file=/tmp/net.pcap` and read it with `tcpdump -nn -r`.
+* Two-instance mode (`make run`, `make run2`) joins two VMs with `-netdev socket`; with no DHCP server each falls back to `10.0.2.15` / `10.0.2.16` (chosen by MAC).

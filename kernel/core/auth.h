@@ -21,8 +21,14 @@
 
 typedef enum { AUTH_OK = 0, AUTH_BAD, AUTH_LOCKED } auth_result_t;
 
+/* Failure counters and lockouts are kept per channel, so guessing passwords over the network
+ * cannot lock the administrator out of the local keyboard. */
+#define AUTH_CH_CONSOLE 0
+#define AUTH_CH_REMOTE  1
+
 void          auth_init(void);
-auth_result_t auth_verify(const char* user, const char* password, uint32_t* wait_secs);
+auth_result_t auth_verify(const char* user, const char* password, uint32_t* wait_secs);       /* console */
+auth_result_t auth_verify_ch(int channel, const char* user, const char* password, uint32_t* wait_secs);
 /* Returns true if the new hash was also saved to disk. */
 bool          auth_set_password(const char* user, const char* new_password, bool* persisted);
 bool          auth_has_default_password(const char* user);
