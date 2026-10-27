@@ -95,3 +95,48 @@ When deployed, your static website serves:
 - `index.html`: The 18-slide interactive presentation deck with slide navigation, speaker notes drawer (<kbd>N</kbd>), overview grid (<kbd>O</kbd>), and presenter timer.
 - `web-runner.html`: The full-screen WebAssembly x86 PC environment that boots `wasm/osisos.bin` (via Multiboot in ~50ms) or `wasm/osisos.iso` with 32 MB RAM and IDE hard disk (`wasm/drive.img`).
 - `wasm/`: Prepackaged WebAssembly emulator (`v86.wasm`), runtime (`libv86.js`), SeaBIOS ROMs, and the OSISOS kernel binary.
+
+---
+
+## Sending Messages via Netcat (`nc`): Native Hardware vs. Web Runner
+
+OSISOS features an integrated TCP service (`msg_serve` on port 9999 in `kernel/net/services.c`) that receives network messages and displays them live on screen.
+
+### 1. In the Web System (Vercel / Browser WebAssembly)
+Web browsers run inside an OS sandbox: client-side JavaScript **cannot** listen on host raw TCP ports or receive raw TCP traffic across the public internet without a relay.
+
+There are two ways to send messages to the Web System:
+1. **Interactive In-Browser Netcat Transmitter (Zero Setup)**:
+   - On `https://osisos.vercel.app/web-runner.html`, look at the right sidebar under **"Netcat (Port 9999) Transmitter"**.
+   - Type your text (e.g. `Hello from Arch Linux!`) and click **nc Send** (or press Enter).
+   - The packet is transmitted into OSISOS, displaying `[Network Message]: Hello from Arch Linux!` on screen with an instant `[ACK]` confirmation.
+2. **Terminal `nc` Bridge (`tools/nc_web_bridge.py`)**:
+   - If running locally, start the Python bridge:
+     ```bash
+     python3 tools/nc_web_bridge.py
+     ```
+   - Open `web-runner.html` in your browser (it connects automatically to the local bridge).
+   - Now in any terminal or from another laptop on your Wi-Fi:
+     ```bash
+     echo "Hello from terminal nc" | nc <your-ip> 9999
+     ```
+
+### 2. In Native QEMU / Local Wi-Fi (Real Intel E1000 Hardware NIC)
+For full bare-metal TCP socket networking with real raw Ethernet frames:
+1. Find your host Wi-Fi IP:
+   ```bash
+   ip -brief address show
+   ```
+2. Allow port 9999 in firewall:
+   ```bash
+   sudo ufw allow 9999/tcp
+   ```
+3. Run OSISOS:
+   ```bash
+   cd kernel && make run
+   ```
+4. From another Arch / Omarchy machine on the same Wi-Fi:
+   ```bash
+   echo "Hello from Arch Linux!" | nc <host-wifi-ip> 9999
+   ```
+
