@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OSISOS • WebAssembly x86 Live Machine</title>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="style.css">
+  
+  <style>
+    body {
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      background: radial-gradient(circle at 50% 10%, rgba(0, 242, 254, 0.05) 0%, #07090e 70%);
+    }
+
+    .runner-header {
+      width: 100%;
+      max-width: 1100px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .runner-brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .runner-title {
+      font-family: var(--font-display);
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .runner-badge {
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(0, 242, 254, 0.12);
+      border: 1px solid rgba(0, 242, 254, 0.35);
+      color: var(--cyan);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--cyan);
+      box-shadow: 0 0 10px var(--cyan);
+      animation: pulseDot 1.5s infinite alternate;
+    }
+
+    @keyframes pulseDot {
+      from { opacity: 0.4; transform: scale(0.9); }
+      to { opacity: 1; transform: scale(1.15); }
+    }
+
+    .runner-nav {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .runner-main {
+      width: 100%;
+      max-width: 1100px;
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 24px;
+      margin-bottom: 30px;
+    }
+
+    @media (max-width: 1000px) {
+      .runner-main {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .vm-frame {
+      background: #020306;
+      border: 1px solid rgba(0, 242, 254, 0.35);
+      border-radius: var(--radius-md);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8), 0 0 35px rgba(0, 242, 254, 0.12);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .vm-toolbar {
+      background: #0b101c;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .vm-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .vm-screen-wrapper {
+      background: #000;
+      min-height: 440px;
+      height: 480px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      cursor: text;
+    }
+
+    #screen_container {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #screen_container canvas {
+      max-width: 100%;
+      max-height: 100%;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      border-radius: 4px;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.9);
+    }
+
+    #screen_container div {
+      white-space: pre;
+      font-family: var(--font-mono);
+      font-size: 15px;
+      line-height: 18px;
+      color: #38bdf8;
+      caret-color: #00f2fe;
+    }
+
+    .vm-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(7, 9, 14, 0.88);
+      backdrop-filter: blur(8px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      z-index: 10;
+      transition: opacity 0.3s ease;
+    }
+
+    .vm-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .btn-boot {
+      background: var(--grad-primary);
+      border: none;
+      color: #020617;
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 1.05rem;
+      padding: 14px 32px;
+      border-radius: 10px;
+      cursor: pointer;
+      box-shadow: 0 0 25px rgba(0, 242, 254, 0.4);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: var(--transition-smooth);
+    }
+
+    .btn-boot:hover {
+      transform: translateY(-2px) scale(1.02);
+      box-shadow: 0 0 35px rgba(0, 242, 254, 0.6);
+    }
+
+    .btn-boot:active {
+      transform: translateY(0);
+    }
+
+    .boot-select {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #fff;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      padding: 6px 12px;
+      border-radius: 6px;
+      outline: none;
+    }
+
+    .sidebar-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .hud-spec-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      font-size: 0.86rem;
+    }
+
+    .hud-spec-label {
+      color: var(--text-faint);
+      font-family: var(--font-mono);
+    }
+
+    .hud-spec-value {
+      color: #fff;
+      font-family: var(--font-mono);
+      font-weight: 600;
+    }
+
+    .quick-cmd-btn {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--cyan);
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      text-align: left;
+      transition: var(--transition-smooth);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .quick-cmd-btn:hover {
+      background: rgba(0, 242, 254, 0.12);
+      border-color: rgba(0, 242, 254, 0.3);
+      color: #fff;
+    }
+  </style>
+
+  <script src="wasm/libv86.js"></script>
+</head>
+<body>
+
+  <!-- Top Navigation & Branding -->
+  <header class="runner-header">
+    <div class="runner-brand">
+      <div class="runner-title">OSISOS <span class="gradient-text">WebAssembly x86 Machine</span></div>
+      <div class="runner-badge">
+        <span class="pulse-dot"></span>
+        <span>WASM JIT V86</span>
+      </div>
+    </div>
+
+    <div class="runner-nav">
+      <a href="index.html" class="nav-btn" style="text-decoration: none;">
+        <span>&#8592;</span> Back to Slide Deck
+      </a>
+    </div>
+  </header>
+
+  <!-- Main Viewport & Machine Controls -->
+  <main class="runner-main">
+
+    <!-- Virtual Machine Window -->
+    <div class="vm-frame">
+      <div class="vm-toolbar">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div class="terminal-buttons">
+            <div class="terminal-button btn-red"></div>
+            <div class="terminal-button btn-yellow"></div>
+            <div class="terminal-button btn-green"></div>
+          </div>
+          <span style="font-family: var(--font-mono); font-size: 0.76rem; color: var(--text-muted);">
+            VGA 80x25 Console • 0xB8000
+          </span>
+        </div>
+
+        <div class="vm-controls">
+          <select id="boot-mode" class="boot-select" title="Boot Method">
+            <option value="multiboot" selected>Direct Multiboot (osisos.bin)</option>
+            <option value="iso">CD-ROM ISO Boot (osisos.iso)</option>
+          </select>
+
+          <button class="nav-btn" id="btn-reset" title="Hard Reboot" style="padding: 4px 10px; font-size: 0.78rem;">
+            🔄 Reset
+          </button>
+          
+          <button class="nav-btn" id="btn-fullscreen" title="Fullscreen VGA" style="padding: 4px 10px; font-size: 0.78rem;">
+            ⛶ Fullscreen
+          </button>
+        </div>
+      </div>
+
+      <!-- VGA Render Container -->
+      <div class="vm-screen-wrapper" id="vm-wrapper">
+        <div id="screen_container">
+          <div style="white-space: pre; font: 14px monospace; line-height: 14px"></div>
+          <canvas style="display: none"></canvas>
+        </div>
+
+        <!-- Initial Start Overlay -->
+        <div class="vm-overlay" id="vm-overlay">
+          <div style="text-align: center; max-width: 480px;">
+            <h2 style="font-family: var(--font-display); font-size: 1.8rem; margin-bottom: 8px;">Run OSISOS in Your Browser</h2>
+            <p style="color: var(--text-muted); font-size: 0.92rem; line-height: 1.5;">
+              Boots the actual compiled 32-bit x86 kernel using an in-browser WebAssembly PC emulator with 32 MB RAM and IDE ATA disk storage.
+            </p>
+          </div>
+
+          <button class="btn-boot" id="btn-start">
+            <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            <span>Boot OSISOS Machine</span>
+          </button>
+          
+          <div style="font-family: var(--font-mono); font-size: 0.76rem; color: var(--text-faint);">
+            Zero server requirement • 100% Client-Side WebAssembly
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sidebar: Real-time Specs & Tips -->
+    <aside style="display: flex; flex-direction: column; gap: 16px;">
+      
+      <!-- Virtual Hardware Specs -->
+      <div class="sidebar-card">
+        <div class="card-title" style="margin-bottom: 4px; font-size: 1.05rem;">
+          <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg>
+          Machine Specifications
+        </div>
+
+        <div>
+          <div class="hud-spec-row">
+            <span class="hud-spec-label">Architecture</span>
+            <span class="hud-spec-value">x86 32-bit (i686)</span>
+          </div>
+          <div class="hud-spec-row">
+            <span class="hud-spec-label">Physical RAM</span>
+            <span class="hud-spec-value" style="color: var(--cyan);">32 MB (8,192 frames)</span>
+          </div>
+          <div class="hud-spec-row">
+            <span class="hud-spec-label">Display</span>
+            <span class="hud-spec-value">VGA Text 80x25</span>
+          </div>
+          <div class="hud-spec-row">
+            <span class="hud-spec-label">Storage</span>
+            <span class="hud-spec-value">ATA IDE (OFS v2 Inodes)</span>
+          </div>
+          <div class="hud-spec-row">
+            <span class="hud-spec-label">Status</span>
+            <span class="hud-spec-value" id="status-text" style="color: var(--amber);">Standby</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Commands & Login Info -->
+      <div class="sidebar-card">
+        <div class="card-title" style="margin-bottom: 4px; font-size: 1.05rem;">
+          <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+          Credentials &amp; Testing
+        </div>
+
+        <div style="background: rgba(0, 242, 254, 0.06); border: 1px solid rgba(0, 242, 254, 0.2); padding: 10px 12px; border-radius: 8px;">
+          <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 4px;">Default Credentials:</div>
+          <div style="font-family: var(--font-mono); font-size: 0.84rem; color: #fff;">
+            User: <strong style="color:var(--cyan)">admin</strong> &nbsp;|&nbsp; Pass: <strong style="color:var(--cyan)">osisos</strong>
+          </div>
+        </div>
+
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">
+          Click to type into VM or try these commands:
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <button class="quick-cmd-btn" data-text="sysinfo"><span>sysinfo</span> <span style="color:var(--text-faint); font-size:0.7rem;">specs</span></button>
+          <button class="quick-cmd-btn" data-text="df"><span>df</span> <span style="color:var(--text-faint); font-size:0.7rem;">disk usage</span></button>
+          <button class="quick-cmd-btn" data-text="dmesg"><span>dmesg</span> <span style="color:var(--text-faint); font-size:0.7rem;">kernel log</span></button>
+          <button class="quick-cmd-btn" data-text="matrix"><span>matrix</span> <span style="color:var(--text-faint); font-size:0.7rem;">visual</span></button>
+          <button class="quick-cmd-btn" data-text="snake"><span>snake</span> <span style="color:var(--text-faint); font-size:0.7rem;">game</span></button>
+        </div>
+      </div>
+
+    </aside>
+
+  </main>
+
+  <script>
+    let emulator = null;
+    const startOverlay = document.getElementById('vm-overlay');
+    const startBtn = document.getElementById('btn-start');
+    const resetBtn = document.getElementById('btn-reset');
+    const fullscreenBtn = document.getElementById('btn-fullscreen');
+    const bootSelect = document.getElementById('boot-mode');
+    const statusText = document.getElementById('status-text');
+
+    function bootMachine() {
+      const mode = bootSelect.value;
+      startOverlay.classList.add('hidden');
+      statusText.textContent = "Booting...";
+      statusText.style.color = "var(--cyan)";
+
+      if (emulator) {
+        try { emulator.destroy(); } catch(e) {}
+      }
+
+      const config = {
+        wasm_path: "wasm/v86.wasm",
+        memory_size: 32 * 1024 * 1024,      // Exact 32 MB RAM target
+        vga_memory_size: 2 * 1024 * 1024,
+        screen_container: document.getElementById("screen_container"),
+        bios: { url: "wasm/seabios.bin" },
+        vga_bios: { url: "wasm/vgabios.bin" },
+        hda: { url: "wasm/drive.img" },      // OFS v2 Inode Storage
+        autostart: true,
+      };
+
+      if (mode === 'multiboot') {
+        config.multiboot = { url: "wasm/osisos.bin" };
+      } else {
+        config.cdrom = { url: "wasm/osisos.iso" };
+      }
+
+      try {
+        const V86Constructor = window.V86 || window.V86Starter;
+        emulator = new V86Constructor(config);
+
+        emulator.add_listener("emulator-ready", () => {
+          statusText.textContent = "Running (Ring 0)";
+          statusText.style.color = "var(--emerald)";
+        });
+
+        emulator.add_listener("emulator-stopped", () => {
+          statusText.textContent = "Halted";
+          statusText.style.color = "var(--amber)";
+        });
+
+      } catch (err) {
+        console.error("v86 error:", err);
+        statusText.textContent = "Error";
+        statusText.style.color = "var(--rose)";
+        alert("Failed to initialize WebAssembly VM: " + err.message);
+      }
+    }
+
+    startBtn.addEventListener('click', bootMachine);
+
+    resetBtn.addEventListener('click', () => {
+      if (emulator) {
+        emulator.restart();
+      } else {
+        bootMachine();
+      }
+    });
+
+    fullscreenBtn.addEventListener('click', () => {
+      const wrapper = document.getElementById('vm-wrapper');
+      if (!document.fullscreenElement) {
+        wrapper.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    });
+
+    // Quick Command Helper: send keyboard keys to emulator
+    document.querySelectorAll('.quick-cmd-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!emulator) {
+          bootMachine();
+          return;
+        }
+        const text = btn.dataset.text;
+        if (text && emulator.keyboard_send_text) {
+          emulator.keyboard_send_text(text + "\n");
+        }
+      });
+    });
+  </script>
+</body>
+</html>

@@ -56,6 +56,17 @@ run-socket: osisos.iso drive.img
 run-socket2: osisos.iso drive2.img
 	qemu-system-i386 -m 32M -cdrom osisos.iso -hda drive2.img -netdev socket,id=n1,connect=127.0.0.1:1234 -device e1000,netdev=n1,mac=52:54:00:12:34:57
 
+# WebAssembly bundle and in-browser runner targets
+wasm: osisos.bin osisos.iso drive.img
+	mkdir -p ../wasm ../presentation/wasm
+	cp osisos.bin osisos.iso drive.img ../wasm/
+	cp osisos.bin osisos.iso drive.img ../presentation/wasm/
+	@echo "OSISOS WebAssembly assets updated in wasm/ and presentation/wasm/"
+
+run-web: wasm
+	@echo "Serving OSISOS WebAssembly runner at http://localhost:8000/web-runner.html"
+	python3 -m http.server 8000 --directory ..
+
 # Pattern rule to automatically compile any .c file into a .o file
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@

@@ -397,3 +397,21 @@ curl http://127.0.0.1:8080/    # Web page served BY the OSISOS kernel!
 nc 127.0.0.1 8007              # Echo test (type words, see them echoed)
 nc 127.0.0.1 9999              # Type: "Live Message from Host!" -> appears on OS screen!
 ```
+
+---
+
+### 4.2 In-Browser WebAssembly (Wasm) Live Demonstration
+
+If you do not want to switch windows away from the presentation, or if you need to present on a machine without QEMU:
+
+1. **Launch the Local Web Server**:
+   ```bash
+   cd /home/ayush/College/OSISOS/kernel
+   make run-web
+   ```
+2. **Open the WebAssembly Machine**:
+   Navigate to `http://localhost:8000/web-runner.html` (or click the **"⚡ Wasm VM ↗"** button in the bottom HUD of the slide deck).
+3. **Click "Boot OSISOS Machine"**:
+   - The WebAssembly x86 PC engine loads `wasm/v86.wasm` and boots `osisos.bin` in milliseconds.
+   - It runs directly inside the HTML canvas with the authentic 32 MB RAM limit and mounts `drive.img` (OFS v2 filesystem).
+   - Log in (`admin` / `osisos`) and run commands directly in the browser window!

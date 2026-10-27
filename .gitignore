@@ -4,3 +4,9 @@
 *.iso
 *.d
 drive2.img
+wasm/*.img
+presentation/wasm/*.img
+!presentation/wasm/seabios.bin
+!presentation/wasm/vgabios.bin
+!wasm/seabios.bin
+!wasm/vgabios.bin
