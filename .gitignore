@@ -8,5 +8,9 @@ wasm/*.img
 presentation/wasm/*.img
 !presentation/wasm/seabios.bin
 !presentation/wasm/vgabios.bin
+!presentation/wasm/osisos.bin
+!presentation/wasm/drive.img
 !wasm/seabios.bin
 !wasm/vgabios.bin
+!wasm/osisos.bin
+!wasm/drive.img
