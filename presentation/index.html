@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OSISOS: 32-bit Operating System & Custom TCP/IP Stack</title>
+  
+  <!-- Typography from Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Ambient Animated Background Lights -->
+  <div class="ambient-glow"></div>
+  <div class="ambient-glow-2"></div>
+
+  <!-- Progress Bar Along Top -->
+  <div class="progress-bar-container">
+    <div class="progress-bar" id="progress-bar"></div>
+  </div>
+
+  <!-- Master Stage & Deck Container -->
+  <main id="presentation-stage">
+    <div class="deck-container">
+
+      <!-- ====================================================================
+           SLIDE 1: Title & Project Identity
+           ==================================================================== -->
+      <section class="slide active" id="slide-1">
+        <div class="slide-header" style="margin-top: auto; margin-bottom: 24px;">
+          <div class="slide-category">B.Tech Capstone Project • Operating Systems</div>
+          <h1 class="slide-title" style="font-size: 3.4rem; max-width: 950px;">
+            <span class="gradient-text">OSISOS</span>
+          </h1>
+          <p class="slide-subtitle" style="font-size: 1.35rem; color: #cbd5e1; max-width: 820px; margin-top: 10px;">
+            A 32-bit Multitasking Operating System Kernel & From-Scratch TCP/IP Network Stack Built on Bare Metal x86
+          </p>
+        </div>
+
+        <div class="grid-4" style="margin-bottom: auto;">
+          <div class="card card-glow-cyan">
+            <span class="badge badge-cyan" style="margin-bottom: 10px; width: fit-content;">Architecture</span>
+            <div class="card-title">Freestanding C & ASM</div>
+            <p>Targeting i686 Protected Mode with custom GDT, IDT, PIC, PMM, and 2-level paging. Zero libc dependencies.</p>
+          </div>
+          <div class="card card-glow-cyan">
+            <span class="badge badge-emerald" style="margin-bottom: 10px; width: fit-content;">Networking</span>
+            <div class="card-title">Full TCP/IP Suite</div>
+            <p>Ethernet II, ARP, IPv4, ICMP, UDP, DHCP, DNS, and RFC 793 TCP state machine with sliding window flow control.</p>
+          </div>
+          <div class="card card-glow-cyan">
+            <span class="badge badge-purple" style="margin-bottom: 10px; width: fit-content;">Storage Engine</span>
+            <div class="card-title">OFS v2 Inode FS</div>
+            <p>Persistent disk storage with ATA IDE PIO driver, 128 inodes, hierarchical paths, and built-in editor.</p>
+          </div>
+          <div class="card card-glow-cyan">
+            <span class="badge badge-amber" style="margin-bottom: 10px; width: fit-content;">Security</span>
+            <div class="card-title">SHA-256 Auth</div>
+            <p>PBKDF2 salted shadow authentication, NULL-pointer page guard, and CPU exception panic screen.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 2: Project Vision & Target Constraints
+           ==================================================================== -->
+      <section class="slide" id="slide-2">
+        <div class="slide-header">
+          <div class="slide-category">System Design Principles</div>
+          <h2 class="slide-title">Engineering Vision & <span class="gradient-text">Constraints</span></h2>
+          <p class="slide-subtitle">Why build an operating system from scratch? Conquering resource scarcity through tight hardware abstractions.</p>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Target Specifications & Constraints</div>
+            <ul class="feature-list" style="margin-top: 8px;">
+              <li class="feature-item">
+                <span class="feature-bullet">✓</span>
+                <div><strong>~32 MB Physical RAM Target:</strong> Strict memory footprint requiring lean allocators and zero data structure bloat.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">✓</span>
+                <div><strong>1 Constrained vCPU (~300 MHz):</strong> Single-core preemptive multitasking with optimized context switches.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">✓</span>
+                <div><strong>Zero External Dependencies:</strong> Freestanding compilation (<code>-ffreestanding</code>, <code>-nostdlib</code>) — no Linux libraries or third-party headers.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">✓</span>
+                <div><strong>Sub-Second Boot:</strong> Boots in under 200ms directly to an interactive protected-mode shell.</div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Dual-Environment Architectural Separation</div>
+            <div class="arch-diagram" style="margin-top: 10px;">
+              <div class="arch-layer">
+                <div class="arch-layer-name">HOST PROTOTYPE</div>
+                <div class="arch-layer-items">
+                  <span class="arch-pill">Rapid API Experimentation</span>
+                  <span class="arch-pill">POSIX Emulation</span>
+                  <span class="arch-pill">Userland Testing</span>
+                </div>
+              </div>
+              <div style="text-align: center; color: var(--text-faint); font-size: 0.8rem; font-family: var(--font-mono);">
+                ▲ Strict boundary: host code never links with kernel ▼
+              </div>
+              <div class="arch-layer" style="border-color: rgba(0, 242, 254, 0.4); background: rgba(0, 242, 254, 0.04);">
+                <div class="arch-layer-name" style="color: var(--cyan);">KERNEL ENVIRONMENT</div>
+                <div class="arch-layer-items">
+                  <span class="arch-pill" style="border-color: var(--cyan);">Ring 0 Bare Metal</span>
+                  <span class="arch-pill" style="border-color: var(--cyan);">Multiboot1 GRUB</span>
+                  <span class="arch-pill" style="border-color: var(--cyan);">Direct MMIO &amp; Ports</span>
+                </div>
+              </div>
+            </div>
+            <p style="margin-top: 14px; font-size: 0.86rem;">
+              This strict boundary guarantees that the production OSISOS kernel runs independently on actual x86 hardware, QEMU, or VirtualBox.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 3: The Boot Journey
+           ==================================================================== -->
+      <section class="slide" id="slide-3">
+        <div class="slide-header">
+          <div class="slide-category">Phase 1 • Early Boot Flow</div>
+          <h2 class="slide-title">The Boot Journey: <span class="gradient-text">Bare Metal to C</span></h2>
+          <p class="slide-subtitle">How OSISOS transitions from BIOS execution through GRUB into 32-bit Protected Mode and C execution.</p>
+        </div>
+
+        <div class="grid-1-2">
+          <div class="card">
+            <div class="card-title">Boot Chain Steps</div>
+            <ol class="feature-list" style="margin-top: 8px; counter-reset: boot-counter;">
+              <li class="feature-item">
+                <span class="badge badge-cyan">01</span>
+                <div><strong>BIOS / UEFI:</strong> Loads GRUB bootloader from CD-ROM ISO or virtual disk.</div>
+              </li>
+              <li class="feature-item">
+                <span class="badge badge-cyan">02</span>
+                <div><strong>Multiboot Handshake:</strong> GRUB verifies magic <code>0x1BADB002</code> in first 8KB of <code>boot.S</code>.</div>
+              </li>
+              <li class="feature-item">
+                <span class="badge badge-cyan">03</span>
+                <div><strong>Protected Mode Transition:</strong> GRUB disables interrupts, enters 32-bit mode, and loads ELF at 1MB.</div>
+              </li>
+              <li class="feature-item">
+                <span class="badge badge-cyan">04</span>
+                <div><strong>Kernel Stack Setup:</strong> <code>boot.S</code> allocates 16KB stack and passes magic &amp; memory pointer to C.</div>
+              </li>
+              <li class="feature-item">
+                <span class="badge badge-cyan">05</span>
+                <div><strong>C Entry (<code>kernel_main</code>):</strong> GDT, IDT, PIC remapping, and memory management online.</div>
+              </li>
+            </ol>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Core Hardware Setup (GDT, IDT &amp; PIC)</div>
+            <div class="grid-2" style="gap: 16px; margin-top: 6px;">
+              <div class="code-box">
+                <div class="code-header">
+                  <span>arch/i386/gdt.c</span>
+                  <span>Descriptors</span>
+                </div>
+                <span class="comment">// 5 Global Descriptors (Flat 4GB)</span><br>
+                0x00: <span class="keyword">NULL Descriptor</span><br>
+                0x08: <span class="type">Kernel Code</span> (Ring 0, Exec/Read)<br>
+                0x10: <span class="type">Kernel Data</span> (Ring 0, Read/Write)<br>
+                0x18: <span class="type">User Code</span> (Ring 3, Exec/Read)<br>
+                0x20: <span class="type">User Data</span> (Ring 3, Read/Write)<br>
+                0x28: <span class="type">Task State Segment (TSS)</span>
+              </div>
+
+              <div class="code-box">
+                <div class="code-header">
+                  <span>arch/i386/pic.c</span>
+                  <span>Interrupts</span>
+                </div>
+                <span class="comment">// PIC Remapping (Avoid CPU Faults)</span><br>
+                Master PIC: <span class="num">0x20</span> -&gt; IRQ 0..7<br>
+                Slave PIC:  <span class="num">0x28</span> -&gt; IRQ 8..15<br><br>
+                <span class="comment">// IDT Table Configuration</span><br>
+                Vectors 0..31: <span class="keyword">CPU Exceptions</span><br>
+                Vectors 32..47: <span class="type">Hardware IRQs</span><br>
+                Vector 0x80: <span class="fn">System Call Trap</span>
+              </div>
+            </div>
+            <p style="margin-top: 14px; font-size: 0.88rem;">
+              Remapping the dual 8259 PIC is critical: x86 CPU exceptions naturally occupy vectors 0-31. Without remapping, timer ticks and keyboard presses would trigger false Double Faults or General Protection Faults!
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 4: Memory Management
+           ==================================================================== -->
+      <section class="slide" id="slide-4">
+        <div class="slide-header">
+          <div class="slide-category">Phase 2 • Core Subsystems</div>
+          <h2 class="slide-title">Memory Management: <span class="gradient-text">PMM, Paging &amp; Heap</span></h2>
+          <p class="slide-subtitle">Three-tier memory hierarchy: 4KB frame tracking, virtual memory with NULL-pointer trap, and dynamic kernel heap.</p>
+        </div>
+
+        <div class="grid-3">
+          <div class="card">
+            <div class="card-title">1. Physical Memory (PMM)</div>
+            <p>Manages all physical RAM frames using an ultra-compact bit array.</p>
+            <div class="stat-box" style="margin: 14px 0;">
+              <div class="stat-number">8,192</div>
+              <div class="stat-label">4 KB Page Frames (32 MB)</div>
+            </div>
+            <ul class="feature-list">
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div>Bitmap consumes only <strong>8 KB of RAM</strong> (1 bit per 4KB frame).</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div>First 4MB identity reserved for kernel code, stack, and page tables.</div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">2. Virtual Memory &amp; Paging</div>
+            <p>Two-level paging directory enabled via the CPU <code>CR0.PG</code> and <code>CR3</code> registers.</p>
+            <div class="code-box" style="margin: 14px 0;">
+              <span class="comment">// NULL Page Protection</span><br>
+              <span class="keyword">void</span> <span class="fn">paging_guard_null_page</span>() {<br>
+              &nbsp;&nbsp;<span class="comment">/* Unmap Page 0 (0x000-0xFFF) */</span><br>
+              &nbsp;&nbsp;page_table_0[0] = <span class="num">0</span>;<br>
+              &nbsp;&nbsp;<span class="fn">flush_tlb</span>();<br>
+              }
+            </div>
+            <p style="font-size: 0.86rem;">
+              <strong>Defensive Architecture:</strong> Null pointer dereferences immediately trigger hardware Page Fault (#PF) rather than silently corrupting memory.
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-title">3. Kernel Heap (KHeap)</div>
+            <p>Dynamic memory allocation for network packets, sockets, and buffers.</p>
+            <ul class="feature-list" style="margin-top: 10px;">
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Boundary-Tag Allocator:</strong> Implements <code>kmalloc()</code> and <code>kfree()</code> with header/footer tags.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Coalescing:</strong> Merges adjacent free blocks during <code>kfree()</code> to prevent heap fragmentation.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Bounded Growth:</strong> Heap is isolated from kernel code and physical frame buffers.</div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 5: Multitasking & Context Switching
+           ==================================================================== -->
+      <section class="slide" id="slide-5">
+        <div class="slide-header">
+          <div class="slide-category">Phase 3 • Process Scheduler</div>
+          <h2 class="slide-title">Preemptive Multitasking &amp; <span class="gradient-text">Context Switching</span></h2>
+          <p class="slide-subtitle">Round-robin scheduling driven by the 100 Hz Programmable Interval Timer (PIT) interrupt.</p>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Context Switch Mechanism</div>
+            <p>Every 10 milliseconds, the timer interrupt rips execution away from the running task:</p>
+            <div class="code-box" style="margin: 12px 0;">
+              <div class="code-header">
+                <span>arch/i386/switch.S</span>
+                <span>Assembly Context Switch</span>
+              </div>
+              <span class="keyword">irq0_timer_isr:</span><br>
+              &nbsp;&nbsp;<span class="fn">pushal</span>             <span class="comment">; Push EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI</span><br>
+              &nbsp;&nbsp;<span class="fn">mov</span> %esp, (%eax)   <span class="comment">; Save old task ESP into PCB</span><br>
+              &nbsp;&nbsp;<span class="fn">mov</span> (%edx), %esp   <span class="comment">; Load next task ESP from PCB</span><br>
+              &nbsp;&nbsp;<span class="fn">call</span> pic_send_eoi  <span class="comment">; Acknowledge PIC interrupt</span><br>
+              &nbsp;&nbsp;<span class="fn">popal</span>              <span class="comment">; Restore all registers of new task</span><br>
+              &nbsp;&nbsp;<span class="fn">iret</span>               <span class="comment">; Pop EIP, CS, EFLAGS -&gt; Resume task!</span>
+            </div>
+            <p style="font-size: 0.88rem;">
+              The CPU's hardware interrupt stack frame (EIP, CS, EFLAGS) combined with software <code>pushal</code> creates a complete, reproducible snapshot of any running process.
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Dual Kernel Task Architecture</div>
+            <div class="grid-2" style="gap: 16px; margin-top: 10px;">
+              <div class="card" style="background: rgba(0, 242, 254, 0.05); border-color: rgba(0, 242, 254, 0.3);">
+                <span class="badge badge-cyan" style="width: fit-content; margin-bottom: 8px;">PID 1</span>
+                <div style="font-weight: 700; color: #fff; font-size: 1.05rem;">Interactive Shell</div>
+                <p style="font-size: 0.85rem; margin-top: 6px;">
+                  Runs user command loop, keyboard input processing, file manipulation, and user programs.
+                </p>
+              </div>
+
+              <div class="card" style="background: rgba(16, 185, 129, 0.05); border-color: rgba(16, 185, 129, 0.3);">
+                <span class="badge badge-emerald" style="width: fit-content; margin-bottom: 8px;">PID 2</span>
+                <div style="font-weight: 700; color: #fff; font-size: 1.05rem;">Network Poller</div>
+                <p style="font-size: 0.85rem; margin-top: 6px;">
+                  Drains Intel E1000 RX rings, handles TCP timeouts/retransmissions, and serves HTTP and echo requests.
+                </p>
+              </div>
+            </div>
+            <p style="margin-top: 18px; font-size: 0.88rem;">
+              <strong>True Concurrency:</strong> While a user is typing a shell command, PID 2 concurrently downloads files, retransmits TCP segments, and responds to incoming web traffic.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 6: Device Drivers & Hardware Discovery
+           ==================================================================== -->
+      <section class="slide" id="slide-6">
+        <div class="slide-header">
+          <div class="slide-category">Phase 4 • Hardware Abstraction</div>
+          <h2 class="slide-title">Hardware Drivers &amp; <span class="gradient-text">Bus Enumeration</span></h2>
+          <p class="slide-subtitle">Communicating directly with physical controllers via Port I/O and Memory Mapped I/O (MMIO).</p>
+        </div>
+
+        <div class="grid-3">
+          <div class="card">
+            <div class="card-title">VGA &amp; PS/2 Keyboard</div>
+            <ul class="feature-list" style="margin-top: 6px;">
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>VGA Text Mode:</strong> Memory buffer at <code>0xB8000</code> (80 columns x 25 rows, 2 bytes/character: ASCII + Color attribute).</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Smooth Scrolling:</strong> Custom row-shifting with hardware cursor synchronization via ports <code>0x3D4</code> / <code>0x3D5</code>.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>PS/2 Keyboard:</strong> IRQ 1 handler reading scancode set 1 from port <code>0x60</code> with shift/caps lock state tracking.</div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">PCI Bus Enumeration</div>
+            <p>Brute-force scan of the PCI configuration space via I/O ports <code>0xCF8</code> (Address) and <code>0xCFC</code> (Data):</p>
+            <div class="code-box" style="margin: 10px 0;">
+              <span class="comment">// 256 buses × 32 slots × 8 funcs</span><br>
+              <span class="keyword">for</span> (bus=0; bus&lt;256; bus++)<br>
+              &nbsp;&nbsp;<span class="keyword">for</span> (slot=0; slot&lt;32; slot++)<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;id = pci_read(bus, slot, 0);<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">if</span> (id == 0x8086) <span class="comment">/* Intel */</span><br>
+              &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;detect_nic(bus, slot);
+            </div>
+            <p style="font-size: 0.82rem; color: var(--text-muted);">
+              Detects Base Address Registers (BARs), MMIO addresses, and enables Bus Mastering for DMA.
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Intel E1000 Gigabit NIC</div>
+            <ul class="feature-list" style="margin-top: 6px;">
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Broad Hardware Support:</strong> Discovers 82540EM, 82545EM, 82543GC across both QEMU and VirtualBox.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Circular DMA Rings:</strong> 64-descriptor RX ring and 64-descriptor TX ring.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Zero CPU Copy:</strong> The NIC card autonomously reads and writes packets directly to RAM via DMA.</div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 7: Storage Engine (OFS v2)
+           ==================================================================== -->
+      <section class="slide" id="slide-7">
+        <div class="slide-header">
+          <div class="slide-category">Phase 5 • Filesystem Architecture</div>
+          <h2 class="slide-title">Storage Engine: <span class="gradient-text">OFS v2 Inode Filesystem</span></h2>
+          <p class="slide-subtitle">Evolution from flat disk storage to an authentic Inode-based filesystem with ATA IDE persistence.</p>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">OFS v2 On-Disk Geometry</div>
+            <div class="arch-diagram" style="margin-top: 10px;">
+              <div class="arch-layer" style="border-color: var(--amber);">
+                <div class="arch-layer-name" style="color: var(--amber);">SECTOR 0 (SUPERBLOCK)</div>
+                <div class="arch-layer-items">
+                  <span class="arch-pill">Magic: 0x4F465332 ("OFS2")</span>
+                  <span class="arch-pill">Total Blocks: 10,240</span>
+                  <span class="arch-pill">Block Size: 1,024 B</span>
+                </div>
+              </div>
+              <div class="arch-layer" style="border-color: var(--indigo);">
+                <div class="arch-layer-name" style="color: var(--indigo);">SECTORS 1 - 16 (INODES)</div>
+                <div class="arch-layer-items">
+                  <span class="arch-pill">128 Inode Entries</span>
+                  <span class="arch-pill">64 Bytes / Inode</span>
+                  <span class="arch-pill">Size, Type, Block Pointers</span>
+                </div>
+              </div>
+              <div class="arch-layer" style="border-color: var(--emerald);">
+                <div class="arch-layer-name" style="color: var(--emerald);">DATA BLOCKS</div>
+                <div class="arch-layer-items">
+                  <span class="arch-pill">1024-Byte Data Sectors</span>
+                  <span class="arch-pill">Contiguous Block Clusters</span>
+                  <span class="arch-pill">Dynamic Bitmap Allocation</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Capabilities &amp; Driver Stack</div>
+            <ul class="feature-list" style="margin-top: 8px;">
+              <li class="feature-item">
+                <span class="feature-bullet">✓</span>
+                <div><strong>ATA IDE Driver:</strong> 28-bit LBA PIO sector reads and writes via primary bus ports <code>0x1F0-0x1F7</code>.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">✓</span>
+                <div><strong>Hierarchical Paths:</strong> Full support for multi-level directories (<code>/etc/shadow</code>, <code>/www/index.html</code>).</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">✓</span>
+                <div><strong>POSIX-like File API:</strong> <code>ofs_lookup()</code>, <code>ofs_stat()</code>, <code>ofs_read()</code>, <code>ofs_put()</code>, <code>ofs_remove()</code>, and <code>ofs_rename()</code>.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">✓</span>
+                <div><strong>Disk Persistence:</strong> Files created in the shell survive system reboots and cold shutdowns.</div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 8: Security, Cryptography & Exception Handling
+           ==================================================================== -->
+      <section class="slide" id="slide-8">
+        <div class="slide-header">
+          <div class="slide-category">Phase 6 • Security &amp; Reliability</div>
+          <h2 class="slide-title">Security &amp; <span class="gradient-text">Fault Tolerance</span></h2>
+          <p class="slide-subtitle">Cryptographic authentication, brute-force mitigation, and graceful CPU exception recovery.</p>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">SHA-256 &amp; PBKDF2 Authentication</div>
+            <p>Freestanding implementation of cryptographic hashing without standard math libraries:</p>
+            <ul class="feature-list" style="margin-top: 10px;">
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>PBKDF2 Derivation:</strong> 10,000 iterations of HMAC-SHA256 with an 8-byte random salt.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Shadow Password File:</strong> Securely stored in <code>/etc/shadow</code> format: <code>user:salt:hash</code>.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Anti-Brute Force Lockout:</strong> Exponential backoff delay (2s, 4s, 8s...) triggered on consecutive failed login attempts.</div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Kernel Panic &amp; Exception Screen (BSOD)</div>
+            <p>Captures all 32 x86 CPU exceptions (Divide-by-Zero #DE, Page Fault #PF, General Protection #GP):</p>
+            <div class="code-box" style="margin: 10px 0; background: #000a1a; border-color: #0055ff;">
+              <span style="color: #60a5fa; font-weight: bold;">*** KERNEL PANIC: EXCEPTION #14 (PAGE FAULT) ***</span><br>
+              EIP: 0x00104A2B &nbsp; CR2 (Fault Address): 0x00000000<br>
+              EAX: 0x00000000 &nbsp; EBX: 0x0012A000 &nbsp; ECX: 0x00000010<br>
+              ESP: 0x0010FDF0 &nbsp; EBP: 0x0010FE14 &nbsp; EFLAGS: 0x00010202<br>
+              <span class="comment">System halted. Dump recorded to klog ring buffer.</span>
+            </div>
+            <p style="font-size: 0.86rem;">
+              Full hardware register state dump and stack trace displayed directly on screen, eliminating silent lockups and making debugging painless.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 9: The Network Stack: Layers 2 and 3
+           ==================================================================== -->
+      <section class="slide" id="slide-9">
+        <div class="slide-header">
+          <div class="slide-category">Phase 7 • Networking Engine</div>
+          <h2 class="slide-title">The Network Stack: <span class="gradient-text">Layers 2 and 3</span></h2>
+          <p class="slide-subtitle">Constructing Ethernet framing, ARP caching, IPv4 routing, and ICMP from scratch.</p>
+        </div>
+
+        <div class="grid-3">
+          <div class="card">
+            <div class="card-title">Ethernet II Layer</div>
+            <ul class="feature-list" style="margin-top: 8px;">
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Frame Header:</strong> 14-byte encapsulation: Dest MAC, Source MAC, EtherType (0x0806 ARP, 0x0800 IPv4).</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>MAC Filtering:</strong> Accepts packets destined specifically for our NIC MAC or Broadcast (<code>FF:FF:FF:FF:FF:FF</code>).</div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">ARP Protocol Engine</div>
+            <ul class="feature-list" style="margin-top: 8px;">
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>16-Entry Cache:</strong> Maps IPv4 addresses to 48-bit physical MAC addresses.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Auto-Resolution:</strong> If MAC is unknown, queues packet and sends ARP Request broadcast.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Instant Replies:</strong> Responds to external ARP requests within 1 millisecond.</div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">IPv4 &amp; ICMP (Ping)</div>
+            <ul class="feature-list" style="margin-top: 8px;">
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>IPv4 Parsing:</strong> Verifies header length, TTL, protocol demux, and internet checksum.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Loopback Route:</strong> <code>127.0.0.1/8</code> traffic routes directly to internal socket queues.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>ICMP Echo:</strong> Full Ping command support with sequence numbers and millisecond RTT calculation.</div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 10: Dynamic Configuration (DHCP & DNS)
+           ==================================================================== -->
+      <section class="slide" id="slide-10">
+        <div class="slide-header">
+          <div class="slide-category">Phase 8 • Network Autoconfiguration</div>
+          <h2 class="slide-title">Dynamic Configuration: <span class="gradient-text">DHCP &amp; DNS</span></h2>
+          <p class="slide-subtitle">Zero manual setup: plug into any network and obtain IP leases and domain name resolution.</p>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">DHCP Client State Machine</div>
+            <p>Fully autonomous 4-stage lease negotiation on UDP ports 68 (Client) &amp; 67 (Server):</p>
+            <div class="arch-diagram" style="margin: 12px 0;">
+              <div class="arch-layer" style="padding: 8px 14px;">
+                <span class="badge badge-cyan">DISCOVER</span>
+                <span style="font-size: 0.85rem;">Broadcast on 255.255.255.255 requesting IP configuration</span>
+              </div>
+              <div class="arch-layer" style="padding: 8px 14px;">
+                <span class="badge badge-purple">OFFER</span>
+                <span style="font-size: 0.85rem;">Router offers IP (e.g. 10.0.2.15), Netmask, Gateway, and DNS</span>
+              </div>
+              <div class="arch-layer" style="padding: 8px 14px;">
+                <span class="badge badge-amber">REQUEST</span>
+                <span style="font-size: 0.85rem;">OSISOS accepts offer and requests lease confirmation</span>
+              </div>
+              <div class="arch-layer" style="padding: 8px 14px;">
+                <span class="badge badge-emerald">ACK</span>
+                <span style="font-size: 0.85rem;">Lease bound! Timer schedules automatic lease renewal at T1</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">DNS Resolver (RFC 1035)</div>
+            <ul class="feature-list" style="margin-top: 6px;">
+              <li class="feature-item">
+                <span class="feature-bullet">✓</span>
+                <div><strong>Label Compression Decoding:</strong> Parses RFC 1035 compression pointers (<code>0xC0xx</code> offset jump) for nested domain names.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">✓</span>
+                <div><strong>A-Record Caching:</strong> High-performance local cache eliminates redundant queries.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">✓</span>
+                <div><strong>Domain CLI Integration:</strong> <code>nslookup example.com</code> or <code>ping google.com</code> resolves hostnames transparently.</div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 11: TCP Implementation - The Crown Jewel
+           ==================================================================== -->
+      <section class="slide" id="slide-11">
+        <div class="slide-header">
+          <div class="slide-category">Phase 9 • Transport Protocol</div>
+          <h2 class="slide-title">TCP Engine: <span class="gradient-text">The Crown Jewel</span></h2>
+          <p class="slide-subtitle">950+ lines of freestanding C implementing the complete RFC 793 Transmission Control Protocol state machine.</p>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Full RFC 793 State Machine</div>
+            <div class="grid-2" style="gap: 10px; margin-top: 8px;">
+              <div class="arch-pill" style="color: #94a3b8;">CLOSED</div>
+              <div class="arch-pill" style="color: var(--cyan); border-color: var(--cyan);">LISTEN (Server)</div>
+              <div class="arch-pill" style="color: var(--amber);">SYN_SENT (Client)</div>
+              <div class="arch-pill" style="color: var(--purple);">SYN_RCVD</div>
+              <div class="arch-pill" style="color: var(--emerald); border-color: var(--emerald); font-weight: bold;">ESTABLISHED</div>
+              <div class="arch-pill" style="color: #cbd5e1;">FIN_WAIT_1 / 2</div>
+              <div class="arch-pill" style="color: #cbd5e1;">CLOSE_WAIT</div>
+              <div class="arch-pill" style="color: #94a3b8;">TIME_WAIT</div>
+            </div>
+            <p style="margin-top: 14px; font-size: 0.88rem;">
+              Handles 3-way handshakes (SYN -&gt; SYN-ACK -&gt; ACK) and orderly 4-way teardowns (FIN -&gt; ACK) concurrently across multiple connections.
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Flow Control &amp; Reliability</div>
+            <ul class="feature-list" style="margin-top: 8px;">
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Sliding Window:</strong> Tracks advertised window from peer, preventing receiver buffer overflow.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Retransmission &amp; Backoff:</strong> Unacknowledged segments trigger timer-based retransmission with exponential backoff.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Non-Blocking Socket API:</strong> Provides <code>tcp_socket()</code>, <code>tcp_connect()</code>, <code>tcp_listen()</code>, <code>tcp_send()</code>, and <code>tcp_recv()</code>.</div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 12: Built-in Network Services & LAN Connectivity
+           ==================================================================== -->
+      <section class="slide" id="slide-12">
+        <div class="slide-header">
+          <div class="slide-category">Phase 10 • Application Layer</div>
+          <h2 class="slide-title">Network Services &amp; <span class="gradient-text">Wi-Fi LAN Reachability</span></h2>
+          <p class="slide-subtitle">Operating as a real server: remote machines connect directly to OSISOS across the local Wi-Fi network.</p>
+        </div>
+
+        <div class="grid-3">
+          <div class="card">
+            <span class="badge badge-cyan" style="width: fit-content; margin-bottom: 8px;">Port 80</span>
+            <div class="card-title">HTTP 1.1 Web Server</div>
+            <p>Built-in <code>httpd.c</code> serves files directly from the OFS filesystem (<code>/www</code> directory):</p>
+            <div class="code-box" style="margin-top: 10px; font-size: 0.76rem;">
+              $ curl http://127.0.0.1:8080/<br>
+              <span class="str">&lt;html&gt;&lt;body&gt;</span><br>
+              <span class="str">&lt;h1&gt;OSISOS Web Server&lt;/h1&gt;</span><br>
+              <span class="str">&lt;p&gt;Uptime: 240s | OFS v2&lt;/p&gt;</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <span class="badge badge-emerald" style="width: fit-content; margin-bottom: 8px;">Port 7</span>
+            <div class="card-title">Echo Server (TCP &amp; UDP)</div>
+            <p>Industry-standard diagnostic echo service supporting RFC 862 testing:</p>
+            <div class="code-box" style="margin-top: 10px; font-size: 0.76rem;">
+              $ nc 127.0.0.1 8007<br>
+              hello from host<br>
+              <span class="type">hello from host</span>
+            </div>
+          </div>
+
+          <div class="card" style="border-color: rgba(0, 242, 254, 0.4); background: rgba(0, 242, 254, 0.05);">
+            <span class="badge badge-purple" style="width: fit-content; margin-bottom: 8px;">Port 9999</span>
+            <div class="card-title">Live Remote Message Terminal</div>
+            <p>Real-time console messaging: any laptop on the Wi-Fi transmits text directly to the OS screen!</p>
+            <div class="code-box" style="margin-top: 10px; font-size: 0.76rem;">
+              $ nc 192.168.1.45 9999<br>
+              &gt; Hello OSISOS Team!<br>
+              <span class="comment">Appears live on OSISOS monitor</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 13: Interactive Shell, Editor & Games
+           ==================================================================== -->
+      <section class="slide" id="slide-13">
+        <div class="slide-header">
+          <div class="slide-category">Phase 11 • User Experience</div>
+          <h2 class="slide-title">Interactive Shell, <span class="gradient-text">Editor &amp; Utilities</span></h2>
+          <p class="slide-subtitle">A rich interactive userland with 25+ commands, text editor, kernel logs, and terminal games.</p>
+        </div>
+
+        <div class="grid-3">
+          <div class="card">
+            <div class="card-title">Shell Commands (25+)</div>
+            <ul class="feature-list" style="margin-top: 6px; font-size: 0.85rem;">
+              <li class="feature-item"><strong>Networking:</strong> <code>ifconfig</code>, <code>ping</code>, <code>dns</code>, <code>nslookup</code>, <code>dhcp</code>, <code>netstat</code>, <code>nc</code>, <code>http</code>, <code>fetch</code>, <code>httpd</code></li>
+              <li class="feature-item"><strong>File System:</strong> <code>ls</code>, <code>cat</code>, <code>edit</code>, <code>df</code>, <code>rm</code>, <code>rmdir</code>, <code>mv</code></li>
+              <li class="feature-item"><strong>Diagnostics:</strong> <code>sysinfo</code>, <code>dmesg</code>, <code>uptime</code>, <code>selftest</code></li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">In-Kernel Text Editor</div>
+            <p>A full-screen interactive text editor running inside the VGA console:</p>
+            <ul class="feature-list" style="margin-top: 8px;">
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div>Arrow key cursor movement across lines.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div>Direct read/write integration with OFS v2.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div>Syntax-safe file saving: <code>edit /www/index.html</code>.</div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Terminal Games &amp; Easter Eggs</div>
+            <ul class="feature-list" style="margin-top: 6px;">
+              <li class="feature-item">
+                <span class="feature-bullet">🐍</span>
+                <div><strong>Snake:</strong> Real-time arcade game rendered in VGA text mode with timer ticks.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">🟢</span>
+                <div><strong>Matrix:</strong> Falling green digital rain animation.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">🐮</span>
+                <div><strong>Cowsay &amp; Fortune:</strong> Classic Unix wisdom.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">🚂</span>
+                <div><strong>SL (Steam Locomotive):</strong> ASCII train animation across the console screen.</div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 14: System Architecture Deep Dive
+           ==================================================================== -->
+      <section class="slide" id="slide-14">
+        <div class="slide-header">
+          <div class="slide-category">System Architecture</div>
+          <h2 class="slide-title">Full Stack <span class="gradient-text">Architectural Blueprint</span></h2>
+          <p class="slide-subtitle">How every component — from silicon to userland — fits seamlessly into the OSISOS ecosystem.</p>
+        </div>
+
+        <div class="arch-diagram" style="gap: 10px;">
+          <div class="arch-layer" style="border-color: rgba(244, 63, 94, 0.4); background: rgba(244, 63, 94, 0.05);">
+            <div class="arch-layer-name" style="color: #f43f5e;">USER INTERFACE (RING 3 / SHELL)</div>
+            <div class="arch-layer-items">
+              <span class="arch-pill">Interactive Shell (admin@osisos)</span>
+              <span class="arch-pill">Text Editor (edit)</span>
+              <span class="arch-pill">Network CLI (ifconfig, ping, http)</span>
+              <span class="arch-pill">Snake &amp; Matrix</span>
+            </div>
+          </div>
+
+          <div class="arch-layer" style="border-color: rgba(139, 92, 246, 0.4); background: rgba(139, 92, 246, 0.05);">
+            <div class="arch-layer-name" style="color: #8b5cf6;">APPLICATION SERVICES</div>
+            <div class="arch-layer-items">
+              <span class="arch-pill">HTTP/1.1 Web Server (Port 80)</span>
+              <span class="arch-pill">Remote Message Terminal (Port 9999)</span>
+              <span class="arch-pill">Echo Server (Port 7)</span>
+              <span class="arch-pill">DHCP Client</span>
+              <span class="arch-pill">DNS Resolver</span>
+            </div>
+          </div>
+
+          <div class="arch-layer" style="border-color: rgba(0, 242, 254, 0.4); background: rgba(0, 242, 254, 0.05);">
+            <div class="arch-layer-name" style="color: var(--cyan);">NETWORKING STACK</div>
+            <div class="arch-layer-items">
+              <span class="arch-pill">TCP State Machine (RFC 793)</span>
+              <span class="arch-pill">UDP Sockets</span>
+              <span class="arch-pill">IPv4 Router &amp; Checksums</span>
+              <span class="arch-pill">ICMP Echo Engine</span>
+              <span class="arch-pill">ARP Cache</span>
+            </div>
+          </div>
+
+          <div class="arch-layer" style="border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.05);">
+            <div class="arch-layer-name" style="color: #10b981;">CORE KERNEL &amp; MEMORY</div>
+            <div class="arch-layer-items">
+              <span class="arch-pill">PIT 100Hz Scheduler (PID 1 &amp; 2)</span>
+              <span class="arch-pill">OFS v2 Inode Filesystem</span>
+              <span class="arch-pill">Two-Level Paging (NULL Guard)</span>
+              <span class="arch-pill">PMM Bitmap</span>
+              <span class="arch-pill">KHeap</span>
+              <span class="arch-pill">SHA-256 Auth</span>
+            </div>
+          </div>
+
+          <div class="arch-layer" style="border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.05);">
+            <div class="arch-layer-name" style="color: #f59e0b;">HARDWARE &amp; DRIVERS</div>
+            <div class="arch-layer-items">
+              <span class="arch-pill">Intel E1000 Gigabit NIC (DMA)</span>
+              <span class="arch-pill">ATA IDE PIO Disk</span>
+              <span class="arch-pill">PCI Bus Scanner</span>
+              <span class="arch-pill">Dual 8259 PIC</span>
+              <span class="arch-pill">VGA 80x25 Buffer</span>
+              <span class="arch-pill">PS/2 Keyboard</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 15: Live Interactive Terminal Demo
+           ==================================================================== -->
+      <section class="slide" id="slide-15">
+        <div class="slide-header">
+          <div class="slide-category">Live Demonstration</div>
+          <h2 class="slide-title">Interactive <span class="gradient-text">OSISOS Terminal</span></h2>
+          <p class="slide-subtitle">Try real OSISOS shell commands right inside the slide deck during your presentation!</p>
+        </div>
+
+        <div class="terminal-window">
+          <div class="terminal-header">
+            <div class="terminal-buttons">
+              <div class="terminal-button btn-red"></div>
+              <div class="terminal-button btn-yellow"></div>
+              <div class="terminal-button btn-green"></div>
+            </div>
+            <div class="terminal-title">OSISOS v1.0 • Protected Mode Console (i686)</div>
+            <span class="badge badge-emerald">Online</span>
+          </div>
+
+          <div class="terminal-body" id="term-body">
+==================================
+      Welcome to OSISOS v1.0      
+==================================
+
+Type 'help' for available commands, or click any quick-command chip below.
+</div>
+
+          <div class="terminal-chips">
+            <span class="terminal-chip" data-cmd="sysinfo">sysinfo</span>
+            <span class="terminal-chip" data-cmd="ifconfig">ifconfig</span>
+            <span class="terminal-chip" data-cmd="ping 10.0.2.2">ping 10.0.2.2</span>
+            <span class="terminal-chip" data-cmd="httpd">httpd</span>
+            <span class="terminal-chip" data-cmd="df">df</span>
+            <span class="terminal-chip" data-cmd="dmesg">dmesg</span>
+            <span class="terminal-chip" data-cmd="cat hello.txt">cat hello.txt</span>
+            <span class="terminal-chip" data-cmd="cowsay OSISOS">cowsay OSISOS</span>
+            <span class="terminal-chip" data-cmd="matrix">matrix</span>
+            <span class="terminal-chip" data-cmd="sl">sl</span>
+            <span class="terminal-chip" data-cmd="clear">clear</span>
+          </div>
+
+          <div style="background: #030508; padding: 10px 16px; border-top: 1px solid rgba(255, 255, 255, 0.05); display: flex; align-items: center;">
+            <span class="terminal-prompt" style="font-family: var(--font-mono); font-size: 0.84rem;">admin@osisos&gt;</span>
+            <input type="text" id="term-input" class="terminal-input" placeholder="Type a command (e.g. sysinfo, ifconfig, httpd)..." autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 16: Engineering Challenges & War Stories
+           ==================================================================== -->
+      <section class="slide" id="slide-16">
+        <div class="slide-header">
+          <div class="slide-category">Engineering Reflections</div>
+          <h2 class="slide-title">Debugging <span class="gradient-text">War Stories &amp; Hurdles</span></h2>
+          <p class="slide-subtitle">Tackling low-level bugs where standard debuggers (gdb, valgrind) are completely unavailable.</p>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Hurdle 1: Console Corruption During Scrolling</div>
+            <p><strong>The Bug:</strong> When the terminal scrolled up, line 2 would periodically glitch and display scrambled characters.</p>
+            <p style="margin-top: 8px;"><strong>Root Cause:</strong> The 100Hz timer ISR was printing a live heartbeat directly to Row 2 of the VGA buffer. When user typing triggered a scroll, the asynchronous timer interrupt wrote in the middle of the line copy!</p>
+            <p style="margin-top: 8px; color: var(--emerald);"><strong>Fix:</strong> Eliminated raw VGA writes inside timer ISR; migrated uptime and status tracking to system variables and <code>sysinfo</code>.</p>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Hurdle 2: VirtualBox vs QEMU PCI Identification</div>
+            <p><strong>The Bug:</strong> Networking worked flawlessly in QEMU, but VirtualBox reported "No E1000 Card Found".</p>
+            <p style="margin-top: 8px;"><strong>Root Cause:</strong> QEMU defaults to Device ID <code>0x100E</code> (82540EM), whereas VirtualBox uses <code>0x100F</code> (82545EM) or <code>0x1004</code> (82543GC).</p>
+            <p style="margin-top: 8px; color: var(--emerald);"><strong>Fix:</strong> Implemented <code>is_e1000_device()</code> matching the complete Intel 8254x PCI ID family, enabling zero-config boot in both hypervisors.</p>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Hurdle 3: Memory Exhaustion Under High Packet Rates</div>
+            <p><strong>The Bug:</strong> Running rapid ping or HTTP requests caused <code>kmalloc</code> failures within 30 seconds.</p>
+            <p style="margin-top: 8px;"><strong>Root Cause:</strong> Received Ethernet packets were allocating fresh heap buffers, but unacknowledged socket queues weren't reclaiming memory on EOF.</p>
+            <p style="margin-top: 8px; color: var(--emerald);"><strong>Fix:</strong> Implemented bounded RX ring buffers and aggressive socket idle timeouts (<code>SVC_IDLE_TICKS</code>), stabilizing memory usage under 2MB.</p>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Hurdle 4: VirtualBox ACPI Shutdown Freeze</div>
+            <p><strong>The Bug:</strong> <code>shutdown</code> command powered off QEMU immediately, but hung VirtualBox in an infinite halt.</p>
+            <p style="margin-top: 8px;"><strong>Root Cause:</strong> QEMU uses port <code>0x604</code>, while VirtualBox uses ACPI PM1a_CNT port <code>0x4004</code>.</p>
+            <p style="margin-top: 8px; color: var(--emerald);"><strong>Fix:</strong> Added multi-port power-off sequence: <code>outw(0x604, 0x2000)</code>, <code>outw(0xB004, 0x2000)</code>, and <code>outw(0x4004, 0x3400)</code>.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 17: Project Verification & Metrics
+           ==================================================================== -->
+      <section class="slide" id="slide-17">
+        <div class="slide-header">
+          <div class="slide-category">Verification &amp; Test Suite</div>
+          <h2 class="slide-title">Testing Methodology &amp; <span class="gradient-text">Metrics</span></h2>
+          <p class="slide-subtitle">Validating an operating system without an OS: automated Python test harness and benchmarks.</p>
+        </div>
+
+        <div class="grid-4" style="margin-bottom: 24px;">
+          <div class="stat-box">
+            <div class="stat-number">8,780</div>
+            <div class="stat-label">Lines of C &amp; Assembly</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-number">34</div>
+            <div class="stat-label">Kernel Modules</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-number">&lt; 0.2s</div>
+            <div class="stat-label">Boot to Protected Shell</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-number">100%</div>
+            <div class="stat-label">Automated Test Pass</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Automated Network Test Harness (tools/nettest.py)</div>
+            <p>Spawns QEMU in headless background mode and exercises the full network stack:</p>
+            <ul class="feature-list" style="margin-top: 8px;">
+              <li class="feature-item"><span class="badge badge-emerald">PASS</span> DHCP negotiation and lease assignment</li>
+              <li class="feature-item"><span class="badge badge-emerald">PASS</span> ICMP ping reply latency (&lt; 2 ms)</li>
+              <li class="feature-item"><span class="badge badge-emerald">PASS</span> TCP multi-segment download flow control</li>
+              <li class="feature-item"><span class="badge badge-emerald">PASS</span> HTTP server response verification</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Freestanding Toolchain</div>
+            <ul class="feature-list" style="margin-top: 8px;">
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Compiler Flags:</strong> <code>gcc -m32 -ffreestanding -O2 -Wall -Wextra -fno-pie -mno-sse -nostdlib</code>.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Custom Linker Script (linker.ld):</strong> Organizes <code>.text</code>, <code>.rodata</code>, <code>.data</code>, and <code>.bss</code> sections starting at physical 1MB.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">•</span>
+                <div><strong>Bootable Media:</strong> Dual boot target — <code>osisos.iso</code> (GRUB El-Torito) and direct <code>osisos.bin</code>.</div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================================================================
+           SLIDE 18: Conclusion & Future Roadmap
+           ==================================================================== -->
+      <section class="slide" id="slide-18">
+        <div class="slide-header" style="margin-top: auto; margin-bottom: 24px;">
+          <div class="slide-category">Summary &amp; Future Directions</div>
+          <h2 class="slide-title">Conclusion &amp; <span class="gradient-text">Future Roadmap</span></h2>
+          <p class="slide-subtitle" style="font-size: 1.2rem; color: #cbd5e1; max-width: 800px;">
+            OSISOS proves that high-performance, modular operating system concepts and network protocols can be crafted from first principles.
+          </p>
+        </div>
+
+        <div class="grid-3" style="margin-bottom: auto;">
+          <div class="card">
+            <div class="card-title">Key Learning Outcomes</div>
+            <ul class="feature-list" style="margin-top: 6px;">
+              <li class="feature-item">
+                <span class="feature-bullet">✓</span>
+                <div>Mastery of CPU protected mode, interrupts, and memory paging hardware.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">✓</span>
+                <div>Deep intuition for network protocol design (sliding window, flow control).</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">✓</span>
+                <div>Independent debugging skills on bare-metal systems.</div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Future Expansion Roadmap</div>
+            <ul class="feature-list" style="margin-top: 6px;">
+              <li class="feature-item">
+                <span class="feature-bullet">🚀</span>
+                <div><strong>x86_64 Long Mode:</strong> Transitioning to 64-bit subpaging and gigabyte address spaces.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">⚡</span>
+                <div><strong>SMP Multicore:</strong> APIC initialization and multi-core thread scheduling.</div>
+              </li>
+              <li class="feature-item">
+                <span class="feature-bullet">📦</span>
+                <div><strong>ELF Loader:</strong> Loading separate binary executables in Ring 3 userland.</div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="card" style="border-color: rgba(0, 242, 254, 0.4); text-align: center; justify-content: center; align-items: center;">
+            <div style="font-size: 2.2rem; margin-bottom: 10px;">🎓</div>
+            <div class="card-title" style="margin-bottom: 6px;">Thank You!</div>
+            <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 14px;">Questions &amp; Discussion</p>
+            <div class="badge badge-cyan" style="font-size: 0.82rem; padding: 6px 14px;">OSISOS Kernel v1.0</div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- Bottom Navigation HUD -->
+  <nav class="nav-hud" aria-label="Slide Controls">
+    <div class="hud-left">
+      <div class="hud-brand">
+        <span>OSISOS</span> // PRESENTATION
+      </div>
+      <div class="hud-timer" id="hud-timer" title="Elapsed Time">00:00</div>
+    </div>
+
+    <div class="hud-center">
+      <button class="nav-btn" id="prev-btn" title="Previous Slide (Left Arrow, Space)">
+        <span>&#8592;</span> Prev
+      </button>
+
+      <div class="slide-counter">
+        <span class="current-slide" id="current-slide-num">1</span> / <span id="total-slides-num">18</span>
+      </div>
+
+      <button class="nav-btn" id="next-btn" title="Next Slide (Right Arrow, Space)">
+        Next <span>&#8594;</span>
+      </button>
+    </div>
+
+    <div class="hud-right">
+      <button class="icon-btn" id="notes-btn" title="Toggle Speaker Notes (N)">
+        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+      </button>
+
+      <button class="icon-btn" id="overview-btn" title="Slide Overview Grid (O / Esc)">
+        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
+      </button>
+
+      <button class="icon-btn" id="fullscreen-btn" title="Toggle Fullscreen (F)">
+        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Speaker Notes Floating Drawer -->
+  <aside class="notes-drawer" id="notes-drawer" aria-label="Speaker Notes">
+    <div class="notes-header">
+      <div class="notes-title">
+        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+        SPEAKER SCRIPT &amp; CUES
+      </div>
+      <button class="icon-btn" id="close-notes" style="width: 24px; height: 24px;">&times;</button>
+    </div>
+    <div class="notes-content" id="notes-content">
+      <!-- Dynamically updated by app.js -->
+    </div>
+  </aside>
+
+  <!-- Slide Overview Grid Modal -->
+  <div class="overview-modal" id="overview-modal" aria-label="All Slides Grid">
+    <div class="overview-header">
+      <div class="overview-title">Slide Overview (<span class="shortcut-tag">Esc</span> / <span class="shortcut-tag">O</span> to close)</div>
+      <button class="icon-btn" id="close-overview">&times;</button>
+    </div>
+    <div class="overview-grid" id="overview-grid">
+      <!-- Dynamically generated by app.js -->
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
