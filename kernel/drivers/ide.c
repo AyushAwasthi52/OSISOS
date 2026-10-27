@@ -52,12 +52,19 @@ bool init_ide(void) {
     outb(ATA_PRIMARY_COMMAND, ATA_CMD_IDENTIFY);
     
     uint8_t status = inb(ATA_PRIMARY_STATUS);
-    if (status == 0) {
-        return false; // Drive does not exist
+    if (status == 0 || status == 0xFF) {
+        return false; // Drive does not exist or floating bus
     }
     
-    // Wait until BSY clears
-    while (inb(ATA_PRIMARY_STATUS) & 0x80);
+    // Wait until BSY clears (bounded timeout)
+    bool bsy_cleared = false;
+    for (uint32_t i = 0; i < IDE_SPIN_LIMIT; i++) {
+        if (!(inb(ATA_PRIMARY_STATUS) & 0x80)) {
+            bsy_cleared = true;
+            break;
+        }
+    }
+    if (!bsy_cleared) return false;
     
     // Check if it's an ATAPI device (CD-ROM)
     uint8_t lba_mid = inb(ATA_PRIMARY_LBA_MID);
@@ -66,12 +73,14 @@ bool init_ide(void) {
         return false; // Not a standard ATA hard drive
     }
     
-    // Wait for DRQ or ERR
-    while (true) {
+    // Wait for DRQ or ERR (bounded timeout)
+    bool drq_ready = false;
+    for (uint32_t i = 0; i < IDE_SPIN_LIMIT; i++) {
         status = inb(ATA_PRIMARY_STATUS);
         if (status & 0x01) return false; // Error occurred
-        if (status & 0x08) break; // DRQ set, data is ready
+        if (status & 0x08) { drq_ready = true; break; } // DRQ set, data is ready
     }
+    if (!drq_ready) return false;
     
     // Read the 256 16-bit words of identification data
     uint16_t identify_data[256];

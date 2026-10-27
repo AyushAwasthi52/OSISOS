@@ -226,12 +226,39 @@ void kernel_main(uint32_t magic, uint32_t multiboot_addr) {
     /* Cast the memory address GRUB gave us into our C structure pointer */
     multiboot_info_t* mbd = (multiboot_info_t*) multiboot_addr;
 
+    /* Detect total system RAM */
+    uint32_t total_memory_kb = 0;
+
+    /* 1. Check if mem_lower and mem_upper are reported (Multiboot flag bit 0) */
+    if ((mbd->flags & 0x01) && (mbd->mem_lower || mbd->mem_upper)) {
+        total_memory_kb = mbd->mem_lower + mbd->mem_upper;
+    }
+
+    /* 2. Check if memory map (mmap) is reported (Multiboot flag bit 6) */
+    if (total_memory_kb == 0 && (mbd->flags & 0x40) && mbd->mmap_addr && mbd->mmap_length) {
+        uint32_t mmap_curr = mbd->mmap_addr;
+        uint32_t mmap_end = mbd->mmap_addr + mbd->mmap_length;
+        while (mmap_curr < mmap_end) {
+            uint32_t size = *((uint32_t*)mmap_curr);
+            uint32_t base_low = *((uint32_t*)(mmap_curr + 4));
+            uint32_t len_low = *((uint32_t*)(mmap_curr + 12));
+            uint32_t type = *((uint32_t*)(mmap_curr + 20));
+            /* Type 1 = Usable RAM */
+            if (type == 1 && (base_low + len_low) / 1024 > total_memory_kb) {
+                total_memory_kb = (base_low + len_low) / 1024;
+            }
+            mmap_curr += (size + 4);
+        }
+    }
+
+    /* 3. Robust fallback: default to system target specification (32 MB) if bootloader passed 0 */
+    if (total_memory_kb < 4096) {
+        total_memory_kb = 32 * 1024; /* 32 MB */
+    }
+
     /* Print the total system RAM */
     terminal_print_string("Total System RAM Installed: ");
-    
-    uint32_t total_memory_kb = mbd->mem_lower + mbd->mem_upper;
     uint32_t total_memory_mb = total_memory_kb / 1024;
-    
     terminal_print_dec(total_memory_mb);
     terminal_print_string(" MB\n\n");
 
